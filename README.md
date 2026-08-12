@@ -1,75 +1,81 @@
 <p align="center">
   <a href="https://github.com/Adam-Ghanem/RedPath">
-    <img src="assets/redpath-logo.png" alt="RedPath logo" width="144" />
+    <img src="assets/redpath-logo.png" alt="RedPath red-fang logo" width="144" />
   </a>
 </p>
 
-# RedPath
+<h1 align="center">RedPath</h1>
 
-> **See the path. Prove the gap.**
+<p align="center"><strong>See the path. Prove the gap.</strong></p>
 
-**Live demo:** [redpath-sec.vercel.app](https://redpath-sec.vercel.app)
+<p align="center">
+  <a href="https://redpath-sec.vercel.app"><strong>Try the live demo →</strong></a>
+</p>
 
-The repository and demo use the **RedPath red-fang** as the canonical brand mark across the console, case file, and documentation.
+<p align="center">
+  <a href="https://redpath-sec.vercel.app"><img src="https://img.shields.io/badge/demo-live%20on%20Vercel-22c55e.svg" alt="Live demo on Vercel" /></a>
+  <a href="frontend/DEPLOYMENT.md"><img src="https://img.shields.io/badge/build-production%20verified-2563eb.svg" alt="Production build verified" /></a>
+  <a href="frontend/DEPLOYMENT.md"><img src="https://img.shields.io/badge/tests-3%20passing%20locally-22c55e.svg" alt="Three frontend tests passing locally" /></a>
+  <a href="backend/requirements.txt"><img src="https://img.shields.io/badge/python-3.11%2B-3776ab.svg" alt="Python 3.11 or later" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f59e0b.svg" alt="MIT License" /></a>
+</p>
 
-[![Checks: locally verified](https://img.shields.io/badge/checks-locally%20verified-22c55e.svg)](frontend/DEPLOYMENT.md) [![License: MIT](https://img.shields.io/badge/License-MIT-72e0a5.svg)](LICENSE) [![Synthetic demo](https://img.shields.io/badge/demo-synthetic%20data-66e3a5.svg)](#demo-mode) [![Safe lab only](https://img.shields.io/badge/scope-authorized%20labs%20only-f2b974.svg)](#safety-and-scope)
+Most pentest tools list vulnerabilities. **RedPath answers the question a SOC team actually needs answered:** *if this attack path exists, do we have evidence that we would detect it?*
 
-**RedPath** is an interactive, safe-by-design security product demo for understanding synthetic Active Directory exposure paths and validating whether defensive telemetry covers the behaviors that matter. It connects asset observations, weighted trust edges, MITRE ATT&CK techniques, finding evidence, and remediation guidance in one explainable console.
+RedPath turns a synthetic Active Directory trust map into a visual case file: weighted exposure paths, ATT&CK-aligned detection coverage, evidence-backed findings, and practical remediation in one explainable console. It is safe to explore immediately—no directory, credentials, agent, API key, or clone required.
 
-The repository starts in **demo mode** with fully synthetic data. No credentials, directory connection, agent, API key, or backend configuration is required to explore the attack-path graph, coverage dashboard, finding dossier, and four safe scenario playbooks.
+## TL;DR
 
-## What the product demonstrates
+- **Explore a complete attack-path case file in your browser:** [open the seeded live demo](https://redpath-sec.vercel.app).
+- **Connect exposure to detection:** inspect weighted paths, chokepoints, ATT&CK coverage, evidence, and remediation together.
+- **Built for safe evaluation:** every asset, path, finding, and scenario is fully synthetic and dry-run by design.
 
-| Surface | What visitors can inspect immediately |
+## See it in action
+
+![RedPath live dashboard with attack path graph](screenshots/redpath-hero.webp)
+
+> **Demo video placeholder — intentionally not a fake recording.** A short walkthrough will show the attack-path graph, detection-coverage view, and report workflow. Until it is recorded, follow the reproducible free-tool instructions in [`docs/record-demo.md`](docs/record-demo.md) to create `assets/demo/redpath-walkthrough.gif` (under 10 MB) from the live demo.
+
+| In less than one minute | What the viewer sees |
 | --- | --- |
-| **Attack-path explorer** | A weighted synthetic Active Directory trust graph, selectable shortest paths, and highlighted chokepoints. |
-| **Detection coverage** | Expected behaviors mapped to ATT&CK techniques, purple-team evidence, coverage by tactic, and clear gap verdicts. |
-| **Findings explorer** | Every asset finding with severity, CVSS score, MITRE technique, supporting evidence, and a concrete remediation action. |
-| **Safe scenario library** | Four individual evidence-led playbooks, each with expected techniques, an explicit dry-run recon plan, and an evidence-backed risk summary. |
-| **Demo-first delivery** | A client-side seeded lab that remains useful even when no backend service is available. |
+| **Attack path graph** | A weighted, visual chain from a user-side asset to a privileged objective, with observed versus inferred relationships. |
+| **Detection coverage** | ATT&CK-aligned coverage by tactic, purple-team gaps, and the evidence supporting each verdict. |
+| **Case report workflow** | Evidence cards, remediation ownership, and a print-ready case-file layout that can be saved as a PDF from the browser. |
 
-## Screenshots
+## Why this is different
 
-### Landing overview
+| Generic vulnerability scanner | RedPath |
+| --- | --- |
+| Lists isolated weaknesses. | Connects weak signals into an explainable, weighted exposure path. |
+| Reports a finding without showing defensive context. | Maps each path and finding to detection coverage and a clear gap verdict. |
+| Usually requires an environment connection before it is useful. | Starts instantly with a safe, synthetic domain that is already explorable. |
+| Treats remediation as a generic recommendation. | Keeps evidence, ATT&CK context, remediation owner, and review state in the same case file. |
 
-![RedPath landing overview](screenshots/redpath-hero.webp)
+## What you can inspect
 
-### Interactive attack-path console
+| Surface | What it demonstrates |
+| --- | --- |
+| **Attack-path explorer** | Weighted synthetic Active Directory relationships, shortest paths, chokepoints, and observed versus inferred edges. |
+| **Detection coverage** | Expected behaviors mapped to ATT&CK techniques, purple-team evidence, coverage by tactic, and gap verdicts. |
+| **Findings dossier** | Asset-level severity, CVSS, technique mapping, supporting evidence, and a concrete remediation action. |
+| **Safe scenario library** | Four individually detailed playbooks with expected techniques, dry-run recon plans, and evidence-backed risk summaries. |
+| **Case-file report** | A structured, print-ready briefing surface that can be saved as a PDF from a browser without an external reporting service. |
 
-![RedPath interactive topology console](screenshots/redpath-console.webp)
+## Quickstart
 
-See [the screenshot guide](docs/screenshots.md) for the verified views and data-handling note.
-
-## Quick start
-
-### Option A: Demo console only
-
-The frontend is self-contained. It is the quickest way to explore the seeded lab.
+The live demo is the fastest route. To run the same seeded console locally, use three commands:
 
 ```bash
-git clone https://github.com/Adam-Ghanem/RedPath.git
-cd RedPath/frontend
+git clone https://github.com/Adam-Ghanem/RedPath.git && cd RedPath/frontend
 pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). The console renders the synthetic lab immediately; it does not request a directory connection or execute commands.
+Open [http://localhost:5173](http://localhost:5173). The frontend renders the synthetic lab immediately and does not connect to a directory or execute commands.
 
-### Option B: Full local stack
+## Demo mode and safety
 
-Docker Compose starts the existing backend alongside the frontend for users who want to inspect the API contracts as well.
-
-```bash
-git clone https://github.com/Adam-Ghanem/RedPath.git
-cd RedPath
-docker compose up --build
-```
-
-The frontend is available at [http://localhost:5173](http://localhost:5173), and the API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs).
-
-## Interactive demo mode
-
-The default dataset models six imaginary assets, five evidence-backed findings, three weighted paths, four ATT&CK tactic coverage summaries, and four scenario playbooks. The graph uses path cost to expose the lowest-cost relationship chain toward a privileged objective rather than asserting that the path has been executed.
+The default dataset models six fictional assets, five evidence-backed findings, three weighted paths, ATT&CK tactic coverage, and four safe scenario playbooks. It is intentionally a **synthetic, dry-run learning and evaluation environment**.
 
 | Synthetic scenario | Expected techniques | Coverage verdict |
 | --- | --- | --- |
@@ -78,7 +84,7 @@ The default dataset models six imaginary assets, five evidence-backed findings, 
 | Certificate template escape | `T1649`, `T1098` | Coverage gap |
 | File services blast radius | `T1021.002`, `T1098` | Validated |
 
-The technique identifiers are linked to official ATT&CK entries and are presented as safe lab behaviors, not as instructions to compromise systems. [1] [2] [3] [4]
+> RedPath must only be used against systems you own or are explicitly authorized to assess. Demo mode contains fabricated hosts, identities, evidence, and paths; it does not store credentials, execute reconnaissance, or connect to an Active Directory environment.
 
 ## Architecture
 
@@ -93,42 +99,36 @@ flowchart LR
     E --> F
 ```
 
-The frontend uses pre-seeded TypeScript data to make the demo immediately explorable. The repository also contains a FastAPI backend for safe lab workflows, audit-oriented domain services, and a Docker Compose configuration. The user-facing console does not depend on a backend for its default demo experience.
+The browser-first console uses pre-seeded TypeScript data to stay immediately explorable. The repository also includes a FastAPI backend for authorized lab workflows, audit-oriented services, and Docker Compose guidance; the live demo remains useful without those services.
 
-## Repository structure
+## Screenshots
 
-```text
-RedPath/
-├── frontend/                 # Vite + React synthetic-data product console
-│   └── src/data/             # Typed demo model and contract tests
-├── backend/                  # FastAPI services for authorized lab workflows
-├── docs/                     # Architecture, scenarios, validation, screenshot notes
-├── screenshots/              # README product captures
-├── CONTRIBUTING.md           # Safe contribution workflow
-└── docker-compose.yml        # Optional full local stack
-```
+| Forensic dashboard | Interactive path console |
+| --- | --- |
+| ![RedPath landing overview](screenshots/redpath-hero.webp) | ![RedPath interactive topology console](screenshots/redpath-console.webp) |
 
-## Validation
+See [the screenshot guide](docs/screenshots.md) for verified views and data-handling notes.
 
-The frontend test suite verifies that all paths are weighted and explorable, that the overall detection score is derived from tactic-level evidence, and that every scenario retains required safety and detail fields. Run the checks locally with:
+## Optional full stack
+
+The optional stack is for maintainers inspecting API contracts—not for using the demo.
 
 ```bash
-cd frontend
-pnpm test
-pnpm run build
+docker compose up --build
 ```
 
-The repository includes a ready-to-enable [GitHub Actions validation template](docs/github-actions/validate.yml) for the frontend checks and backend suite. A maintainer can copy it into `.github/workflows/validate.yml` after enabling the GitHub App’s **Workflows** permission.
-
-## Safety and scope
-
-RedPath is a **defensive, lab-oriented project**. It must only be used against systems that you own or are explicitly authorized to assess. Demo mode uses fabricated hosts, identities, findings, paths, and evidence. It does not store credentials, connect to a directory, or execute network commands.
-
-> The scenario plans are dry-run display artifacts for safe learning and defensive validation. They are not operational runbooks and should not be applied to production systems.
+The console is available at [http://localhost:5173](http://localhost:5173); API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ## Contributing
 
-The project values precise documentation, explainable reasoning, deterministic test coverage, and safety-by-default product behavior. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
+Contributions are welcome when they preserve RedPath’s safe, explainable, and reproducible design. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
+
+## Roadmap
+
+- [ ] Add a concise, real browser walkthrough GIF for the live dashboard, coverage view, and PDF save flow.
+- [ ] Add evidence-detail deep links from each graph node.
+- [ ] Publish additional synthetic scenarios for identity, certificate, and lateral-movement coverage gaps.
+- [ ] Add a maintainer-enabled validation workflow after the repository app has the required Workflows permission.
 
 ## References
 
