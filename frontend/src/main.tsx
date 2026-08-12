@@ -4,6 +4,7 @@ import App from "./App";
 import "./index.css";
 import "./light-theme.css";
 import "./forensic-casefile.css";
+import "./forensic-reference-layout.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

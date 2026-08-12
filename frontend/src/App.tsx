@@ -70,14 +70,22 @@ export default function Home() {
             <div className="hero-actions"><a className="button primary" href="#explore"><Crosshair size={16} /> Open interactive lab</a><a className="button secondary" href="#github"><GitPullRequest size={16} /> View repository assets</a></div>
             <div className="hero-proof"><span><CheckCircle2 size={15} /> 100% synthetic lab data</span><span><CheckCircle2 size={15} /> zero configuration</span><span><CheckCircle2 size={15} /> safe dry-run only</span></div>
           </div>
-          <div className="hero-panel" aria-label="RedPath operational overview">
-            <div className="panel-window-bar"><span /><span /><span /><div>ATTACK PATH DIAGRAM / RP-101</div><CircleDotDashed size={15} /></div>
-            <div className="hero-panel-content">
-              <div className="hero-score"><div className="score-ring"><span>{coverage}<small>%</small></span></div><div><span className="metric-label">Detection coverage</span><strong>12 <small>/ 16 expected signals</small></strong><p>Three high-priority defensive gaps are ready for review.</p></div></div>
-              <div className="path-preview"><div className="preview-label"><span>Shortest critical path</span><b>8 weighted hops</b></div><div className="preview-route"><span>WS-21</span><ChevronRight size={13} /><span>APP-01</span><ChevronRight size={13} /><span className="route-hot">svc-backup</span><ChevronRight size={13} /><span>DC-01</span></div></div>
-              <div className="hero-panel-footer"><span><i className="status-dot" /> SYNTHETIC DEMO ONLINE</span><span>LAB / 6 ASSETS / 5 FINDINGS</span></div>
+          <div className="hero-panel" aria-label="RedPath evidence board attack path diagram">
+            <div className="case-board">
+              <div className="case-board-head"><span>ATTACK PATH DIAGRAM / RP-101</span><b>CRITICAL</b></div>
+              <div className="case-board-route">
+                <svg viewBox="0 0 520 300" aria-hidden="true"><path d="M47 103 H165 L227 64 H354 L448 38 V166 L405 208 H267 L224 250" /><path className="inferred" d="M165 103 L224 179 L302 179" /><circle className="hot" cx="47" cy="103" r="7" /><circle cx="165" cy="103" r="7" /><circle className="hot" cx="227" cy="64" r="7" /><circle cx="354" cy="64" r="7" /><circle className="hot" cx="448" cy="38" r="7" /><circle cx="405" cy="208" r="7" /><circle className="hot" cx="224" cy="250" r="7" /></svg>
+                <div className="board-point initial hot">Initial access<b>WS-21</b><small>Finance workstation</small></div><div className="board-point credential">Credential access<b>svc-backup</b><small>Recoverable ticket</small></div><div className="board-point privilege hot">Privilege escalation<b>Tier-0</b><small>Delegated control</small></div><div className="board-point discovery">Discovery<b>Directory map</b><small>Inferred relationship</small></div><div className="board-point lateral">Lateral movement<b>APP-01</b><small>Admin share route</small></div><div className="board-point exfil hot">Exposure confirmed<b>DC-01</b><small>Directory control</small></div>
+              </div>
+              <div className="board-legend"><span>Observed</span><span>Inferred</span><span>Evidence point</span></div>
             </div>
           </div>
+          <aside className="case-evidence-rail" aria-label="Evidence cards">
+            <div className="evidence-stamp">EVIDENCE<small>HANDLE WITH CARE</small></div>
+            <article className="evidence-card"><span>EVIDENCE 01</span><b>Credential exposure</b><p>Service identity delegation path observed in the synthetic lab.</p><em>RP-101 · 9.1 CVSS</em></article>
+            <article className="evidence-card"><span>EVIDENCE 02</span><b>Coverage gap</b><p>No correlated alert for the service-ticket exposure path.</p><em>T1558.003</em></article>
+            <article className="evidence-card"><span>EVIDENCE 03</span><b>Remediation</b><p>Rotate credential and remove unconstrained delegation.</p><em>OWNER: IDENTITY OPS</em></article>
+          </aside>
         </section>
 
         <section className="trust-strip"><span>Built for clear security conversations</span><div><span><Network size={16} /> Attack path reasoning</span><span><Radar size={16} /> Purple-team evidence</span><span><ShieldCheck size={16} /> Safe demonstration mode</span><span><FileCode2 size={16} /> GitHub-ready from day one</span></div></section>
