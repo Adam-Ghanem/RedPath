@@ -8,6 +8,7 @@ import "./forensic-reference-layout.css";
 import "./forensic-reference-fidelity.css";
 import "./forensic-exact-reference.css";
 import "./forensic-polish.css";
+import "./attack-board-refinement.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
