@@ -1,0 +1,25 @@
+services:
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: sqlite:///./data/redpath.db
+      ALLOWED_CIDRS: ${ALLOWED_CIDRS:-192.168.56.0/24,10.10.10.0/24}
+      DRY_RUN: ${DRY_RUN:-true}
+      AUDIT_LOG_PATH: ./data/audit.jsonl
+    volumes:
+      - redpath-data:/app/data
+    ports:
+      - "8000:8000"
+
+  console:
+    build: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  redpath-data:

@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.bandit]
+exclude_dirs = ["backend/tests"]
