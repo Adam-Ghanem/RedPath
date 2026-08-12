@@ -1,25 +1,27 @@
 services:
   api:
+    profiles: ["demo"]
     build: ./backend
     environment:
+      # Literal values are deliberate: the demo API cannot be switched out of dry-run mode by host variables.
       DATABASE_URL: sqlite:///./data/redpath.db
-      ALLOWED_CIDRS: ${ALLOWED_CIDRS:-192.168.56.0/24,10.10.10.0/24}
-      DRY_RUN: ${DRY_RUN:-true}
+      ALLOWED_CIDRS: 192.0.2.0/24,198.51.100.0/24
+      DRY_RUN: "true"
       AUDIT_LOG_PATH: ./data/audit.jsonl
     volumes:
-      - redpath-data:/app/data
+      - redpath-demo-data:/app/data
     ports:
       - "8000:8000"
 
   console:
-    build: ./frontend
+    profiles: ["demo"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.demo
     depends_on:
       - api
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "5173:80"
 
 volumes:
-  redpath-data:
+  redpath-demo-data:

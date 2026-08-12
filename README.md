@@ -114,10 +114,10 @@ See [the screenshot guide](docs/screenshots.md) for verified views and data-hand
 The optional stack is for maintainers inspecting API contracts—not for using the demo.
 
 ```bash
-docker compose up --build
+docker compose --profile demo up --build
 ```
 
-The console is available at [http://localhost:5173](http://localhost:5173); API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs).
+The console is available at [http://localhost:5173](http://localhost:5173); API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs). Read the [safe demo deployment guide](docs/demo-deployment.md) before deploying the profile to Render or Fly.io.
 
 ## Contributing
 
