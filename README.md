@@ -8,11 +8,11 @@
 
 > **See the path. Prove the gap.**
 
-**Live demo:** [redpath-console.vercel.app](https://redpath-console.vercel.app)
+**Live demo:** [redpath-sec.vercel.app](https://redpath-sec.vercel.app)
 
 The repository and demo use the **RedPath red-fang** as the canonical brand mark across the console, case file, and documentation.
 
-[![Validate RedPath](https://github.com/Adam-Ghanem/RedPath/actions/workflows/validate.yml/badge.svg)](https://github.com/Adam-Ghanem/RedPath/actions/workflows/validate.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-72e0a5.svg)](LICENSE) [![Synthetic demo](https://img.shields.io/badge/demo-synthetic%20data-66e3a5.svg)](#demo-mode) [![Safe lab only](https://img.shields.io/badge/scope-authorized%20labs%20only-f2b974.svg)](#safety-and-scope)
+[![Checks: locally verified](https://img.shields.io/badge/checks-locally%20verified-22c55e.svg)](frontend/DEPLOYMENT.md) [![License: MIT](https://img.shields.io/badge/License-MIT-72e0a5.svg)](LICENSE) [![Synthetic demo](https://img.shields.io/badge/demo-synthetic%20data-66e3a5.svg)](#demo-mode) [![Safe lab only](https://img.shields.io/badge/scope-authorized%20labs%20only-f2b974.svg)](#safety-and-scope)
 
 **RedPath** is an interactive, safe-by-design security product demo for understanding synthetic Active Directory exposure paths and validating whether defensive telemetry covers the behaviors that matter. It connects asset observations, weighted trust edges, MITRE ATT&CK techniques, finding evidence, and remediation guidance in one explainable console.
 
