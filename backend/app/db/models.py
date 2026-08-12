@@ -111,6 +111,8 @@ class EvidenceItem(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     review_status: Mapped[str] = mapped_column(String(32), default="unreviewed", index=True)
+    reviewer: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -127,6 +129,22 @@ class RemediationItem(Base):
     priority: Mapped[str] = mapped_column(String(16), default="medium", index=True)
     status: Mapped[str] = mapped_column(String(32), default="open", index=True)
     due_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RiskAcceptance(Base):
+    __tablename__ = "risk_acceptances"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
+    remediation_id: Mapped[str | None] = mapped_column(ForeignKey("remediation_items.id"), nullable=True, index=True)
+    technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    finding_title: Mapped[str] = mapped_column(String(255))
+    rationale: Mapped[str] = mapped_column(Text)
+    approver: Mapped[str] = mapped_column(String(128))
+    expires_on: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

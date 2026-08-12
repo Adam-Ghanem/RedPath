@@ -175,6 +175,77 @@ def test_enterprise_integrity_manifests_sla_and_export() -> None:
     assert integrity.json()["valid"] is True
 
 
+def test_governance_lifecycle_acceptance_and_kpis() -> None:
+    campaign = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "Governance Control Review",
+            "objective": "Exercise evidence review, remediation lifecycle, and risk acceptance controls.",
+        },
+    ).json()
+    evidence = client.post(
+        "/api/v1/evidence",
+        json={
+            "campaign_id": campaign["campaign_id"],
+            "evidence_type": "fixture",
+            "source": "lab/fixtures/wazuh_alerts.json",
+            "title": "Detection gap evidence",
+            "sha256": "c" * 64,
+            "technique_id": "T1558.003",
+        },
+    ).json()
+    evidence_review = client.patch(
+        f"/api/v1/evidence/{evidence['evidence_id']}/review",
+        json={"review_status": "accepted", "reviewer": "soc-lead", "notes": "Reviewed against the lab fixture."},
+    )
+    assert evidence_review.status_code == 200
+    assert evidence_review.json()["review_status"] == "accepted"
+
+    remediation = client.post(
+        "/api/v1/remediations",
+        json={
+            "campaign_id": campaign["campaign_id"],
+            "finding_title": "Detection gap requires a regression rule",
+            "technique_id": "T1558.003",
+            "recommendation": "Add a correlation rule and preserve a synthetic regression event.",
+            "owner": "soc-engineering",
+            "priority": "critical",
+        },
+    ).json()
+    lifecycle = client.patch(
+        f"/api/v1/remediations/{remediation['remediation_id']}/lifecycle",
+        json={"status": "in_progress", "actor": "soc-engineering", "note": "Rule design started."},
+    )
+    assert lifecycle.status_code == 200
+    assert lifecycle.json()["status"] == "in_progress"
+
+    acceptance = client.post(
+        "/api/v1/risk-acceptances",
+        json={
+            "campaign_id": campaign["campaign_id"],
+            "remediation_id": remediation["remediation_id"],
+            "technique_id": "T1558.003",
+            "finding_title": "Detection gap requires a regression rule",
+            "rationale": "Temporary acceptance while the rule is implemented and validated in the lab.",
+            "approver": "security-manager",
+            "expires_on": "2099-12-31",
+        },
+    )
+    assert acceptance.status_code == 201
+    assert acceptance.json()["status"] == "active"
+
+    scorecard = client.get("/api/v1/scorecards/coverage")
+    kpis = client.get("/api/v1/kpis/executive")
+    acceptances = client.get("/api/v1/risk-acceptances")
+    assert scorecard.status_code == 200
+    assert scorecard.json()["accepted_risks"] >= 1
+    assert kpis.status_code == 200
+    evidence_records = client.get("/api/v1/evidence").json()
+    expected_backlog = sum(item["review_status"] in {"unreviewed", "in_review"} for item in evidence_records)
+    assert kpis.json()["evidence_review_backlog"] == expected_backlog
+    assert acceptances.status_code == 200
+
+
 def test_purple_coverage_endpoint_returns_gap() -> None:
     response = client.post(
         "/api/v1/purple/analyze",

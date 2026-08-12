@@ -190,7 +190,15 @@ class EvidenceCreate(BaseModel):
 class EvidenceResponse(EvidenceCreate):
     evidence_id: str
     review_status: str
+    reviewer: str | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
+
+
+class EvidenceReviewUpdate(BaseModel):
+    review_status: Literal["unreviewed", "in_review", "accepted", "rejected"]
+    reviewer: str = Field(min_length=2, max_length=128)
+    notes: str = Field(default="", max_length=4000)
 
 
 class RemediationCreate(BaseModel):
@@ -208,6 +216,48 @@ class RemediationResponse(RemediationCreate):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class RemediationLifecycleUpdate(BaseModel):
+    status: Literal["open", "in_progress", "blocked", "resolved", "closed"]
+    actor: str = Field(min_length=2, max_length=128)
+    note: str = Field(default="", max_length=2000)
+
+
+class RiskAcceptanceCreate(BaseModel):
+    campaign_id: str | None = None
+    remediation_id: str | None = None
+    technique_id: str | None = None
+    finding_title: str = Field(min_length=3, max_length=255)
+    rationale: str = Field(min_length=20, max_length=4000)
+    approver: str = Field(min_length=2, max_length=128)
+    expires_on: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class RiskAcceptanceResponse(RiskAcceptanceCreate):
+    acceptance_id: str
+    status: Literal["active", "expired", "revoked"]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CoverageScorecard(BaseModel):
+    expected_techniques: int = Field(ge=0)
+    detected_techniques: int = Field(ge=0)
+    open_gaps: int = Field(ge=0)
+    accepted_risks: int = Field(ge=0)
+    coverage_percent: float = Field(ge=0, le=100)
+    effective_coverage_percent: float = Field(ge=0, le=100)
+
+
+class ExecutiveKpis(BaseModel):
+    risk_score: float = Field(ge=0, le=100)
+    detection_coverage_percent: float = Field(ge=0, le=100)
+    effective_coverage_percent: float = Field(ge=0, le=100)
+    open_critical_findings: int = Field(ge=0)
+    overdue_remediations: int = Field(ge=0)
+    expiring_acceptances: int = Field(ge=0)
+    evidence_review_backlog: int = Field(ge=0)
 
 
 class TrendPoint(BaseModel):

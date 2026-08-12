@@ -205,3 +205,13 @@ h3 { margin-top: 7px; font-size: 16px; letter-spacing: -.02em; }
 .integrity-badge.valid { border-color: rgba(130, 227, 111, .6); color: #82e36f; }
 .integrity-badge.invalid { border-color: rgba(255, 92, 103, .8); color: #ff7d83; }
 @media (max-width: 760px) { .control-posture-grid { grid-template-columns: repeat(2, 1fr); } .control-posture-grid > div:nth-child(2) { border-right: none; } .control-posture-grid .small-button { grid-column: 1 / -1; justify-self: start; } }
+
+.governance-panel { grid-column: 1 / -1; }
+.acceptance-list { display: grid; gap: 2px; }
+.acceptance-row { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 12px 0; border-bottom: 1px solid #1d3550; }
+.acceptance-row strong, .acceptance-row small, .acceptance-row b { display: block; }
+.acceptance-row strong { color: #f2c56b; font: 10px "IBM Plex Mono", monospace; }
+.acceptance-row small { margin-top: 4px; color: #788fae; font-size: 10px; }
+.acceptance-row span { text-align: right; }
+.acceptance-row b { color: #aabbd0; font: 10px "IBM Plex Mono", monospace; }
+.acceptance-row span small { font: 9px "IBM Plex Mono", monospace; text-transform: uppercase; }

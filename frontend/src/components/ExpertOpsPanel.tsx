@@ -7,6 +7,8 @@ type TrendPoint = { period: string; average_risk_score: number; average_coverage
 type TuningItem = { technique_id: string; gap_count: number; priority: string; rule_intent: string; event_sources: string[]; regression_fixture: string };
 type Integrity = { valid: boolean; event_count: number; tail_digest: string; error: string | null };
 type SlaItem = { remediation_id: string; finding_title: string; priority: string; status: string; owner: string; due_date: string; target_days: number; state: string };
+type Kpis = { risk_score: number; detection_coverage_percent: number; effective_coverage_percent: number; open_critical_findings: number; overdue_remediations: number; expiring_acceptances: number; evidence_review_backlog: number };
+type Acceptance = { acceptance_id: string; finding_title: string; technique_id?: string; approver: string; expires_on: string; status: string };
 
 const API_BASE = "/api/v1";
 
@@ -36,6 +38,8 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
   const [tuning, setTuning] = useState<TuningItem[]>([]);
   const [integrity, setIntegrity] = useState<Integrity>({ valid: true, event_count: 0, tail_digest: "GENESIS", error: null });
   const [sla, setSla] = useState<SlaItem[]>([]);
+  const [kpis, setKpis] = useState<Kpis>({ risk_score: 78, detection_coverage_percent: 66.7, effective_coverage_percent: 66.7, open_critical_findings: 1, overdue_remediations: 0, expiring_acceptances: 0, evidence_review_backlog: 0 });
+  const [acceptances, setAcceptances] = useState<Acceptance[]>([]);
   const [selectedId, setSelectedId] = useState(seededCampaign.campaign_id);
   const [creating, setCreating] = useState(false);
   const selected = useMemo(() => campaigns.find((item) => item.campaign_id === selectedId) ?? campaigns[0], [campaigns, selectedId]);
@@ -50,7 +54,9 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
       fetch(`${API_BASE}/detection-tuning`),
       fetch(`${API_BASE}/integrity/audit`),
       fetch(`${API_BASE}/remediations/sla`),
-    ]).then(async ([campaignResponse, evidenceResponse, remediationResponse, trendResponse, tuningResponse, integrityResponse, slaResponse]) => {
+      fetch(`${API_BASE}/kpis/executive`),
+      fetch(`${API_BASE}/risk-acceptances`),
+    ]).then(async ([campaignResponse, evidenceResponse, remediationResponse, trendResponse, tuningResponse, integrityResponse, slaResponse, kpiResponse, acceptanceResponse]) => {
       if (campaignResponse.ok) {
         const items = await campaignResponse.json();
         setCampaigns(items.length ? items : [seededCampaign]);
@@ -62,6 +68,8 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
       if (tuningResponse.ok) setTuning(await tuningResponse.json());
       if (integrityResponse.ok) setIntegrity(await integrityResponse.json());
       if (slaResponse.ok) setSla(await slaResponse.json());
+      if (kpiResponse.ok) setKpis(await kpiResponse.json());
+      if (acceptanceResponse.ok) setAcceptances(await acceptanceResponse.json());
     }).catch(() => onActivity("Expert operations API unavailable; seeded campaign workspace remains active."));
   }, [apiOnline, onActivity]);
 
@@ -118,7 +126,11 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
     <section id="campaigns" className="expert-ops-grid">
       <article className="panel control-posture">
         <div className="panel-heading"><div><span className="eyebrow">Enterprise controls / chain of custody</span><h3>Integrity & export posture</h3></div><span className={`integrity-badge ${integrity.valid ? "valid" : "invalid"}`}>{integrity.valid ? "CHAIN VALID" : "CHAIN BROKEN"}</span></div>
-        <div className="control-posture-grid"><div><strong>{integrity.event_count}</strong><small>audit events verified</small></div><div><strong>{sla.filter((item) => item.state === "overdue").length}</strong><small>overdue SLA actions</small></div><div><strong>{evidence.length}</strong><small>evidence records</small></div><button className="small-button" onClick={exportCampaign}>Export campaign package</button></div>
+        <div className="control-posture-grid"><div><strong>{integrity.event_count}</strong><small>audit events verified</small></div><div><strong>{Math.round(kpis.risk_score)}</strong><small>latest risk score</small></div><div><strong>{Math.round(kpis.effective_coverage_percent)}%</strong><small>effective coverage</small></div><div><strong>{kpis.overdue_remediations}</strong><small>overdue SLA actions</small></div><div><strong>{evidence.length}</strong><small>evidence records</small></div><button className="small-button" onClick={exportCampaign}>Export campaign package</button></div>
+      </article>
+      <article className="panel governance-panel">
+        <div className="panel-heading"><div><span className="eyebrow">Governance / decision register</span><h3>Accepted risk</h3></div><span className="panel-tag">TIME-BOUNDED</span></div>
+        {acceptances.length === 0 ? <div className="expert-empty">No active risk acceptances.<small>Accepted risk remains visible and expires automatically.</small></div> : <div className="acceptance-list">{acceptances.slice(0, 3).map((item) => <div className="acceptance-row" key={item.acceptance_id}><div><strong>{item.technique_id ?? "Finding"}</strong><small>{item.finding_title}</small></div><span><b>{item.expires_on}</b><small>{item.approver} · {item.status}</small></span></div>)}</div>}
       </article>
       <article className="panel campaign-panel">
         <div className="panel-heading"><div><span className="eyebrow">Operations / campaign context</span><h3>Assessment campaigns</h3></div><button className="small-button" onClick={createCampaign} disabled={creating}>{creating ? "Creating…" : "+ New campaign"}</button></div>

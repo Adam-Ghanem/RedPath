@@ -19,11 +19,14 @@ from app.schemas.contracts import (
     CampaignTimelineEvent,
     CorrelatedRisk,
     CorrelationRequest,
+    CoverageScorecard,
     DetectionGapReport,
     DetectionTuningItem,
     EvidenceCreate,
     EvidenceManifest,
     EvidenceResponse,
+    EvidenceReviewUpdate,
+    ExecutiveKpis,
     FindingInput,
     GraphRequest,
     GraphResult,
@@ -32,8 +35,11 @@ from app.schemas.contracts import (
     ReconRequest,
     ReconResult,
     RemediationCreate,
+    RemediationLifecycleUpdate,
     RemediationResponse,
     RemediationSlaItem,
+    RiskAcceptanceCreate,
+    RiskAcceptanceResponse,
     ScenarioRunRequest,
     ScenarioRunResponse,
     ScenarioSpec,
@@ -55,6 +61,14 @@ from app.services.expert_ops import (
     list_remediations,
     remediation_sla,
     risk_trend,
+)
+from app.services.governance import (
+    coverage_scorecard,
+    create_risk_acceptance,
+    executive_kpis,
+    list_risk_acceptances,
+    review_evidence,
+    update_remediation,
 )
 from app.services.graph_engine import analyze_attack_graph
 from app.services.mitre import all_techniques
@@ -156,6 +170,18 @@ def build_router(settings: Settings) -> APIRouter:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @router.patch("/evidence/{evidence_id}/review", response_model=EvidenceResponse)
+    def evidence_review(evidence_id: str, request: EvidenceReviewUpdate) -> EvidenceResponse:
+        try:
+            result = review_evidence(evidence_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "evidence.reviewed",
+            {"evidence_id": evidence_id, "status": result.review_status, "reviewer": result.reviewer},
+        )
+        return result
+
     @router.post("/evidence", response_model=EvidenceResponse, status_code=201)
     def evidence_create(request: EvidenceCreate) -> EvidenceResponse:
         try:
@@ -177,6 +203,42 @@ def build_router(settings: Settings) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         audit.record("remediation.created", {"remediation_id": result.remediation_id, "priority": result.priority})
         return result
+
+    @router.patch("/remediations/{remediation_id}/lifecycle", response_model=RemediationResponse)
+    def remediation_lifecycle(remediation_id: str, request: RemediationLifecycleUpdate) -> RemediationResponse:
+        try:
+            result = update_remediation(remediation_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "remediation.lifecycle_updated",
+            {"remediation_id": remediation_id, "status": result.status, "actor": request.actor},
+        )
+        return result
+
+    @router.get("/risk-acceptances", response_model=list[RiskAcceptanceResponse])
+    def risk_acceptances() -> list[RiskAcceptanceResponse]:
+        return list_risk_acceptances(session_factory)
+
+    @router.post("/risk-acceptances", response_model=RiskAcceptanceResponse, status_code=201)
+    def risk_acceptance_create(request: RiskAcceptanceCreate) -> RiskAcceptanceResponse:
+        try:
+            result = create_risk_acceptance(request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "risk.accepted",
+            {"acceptance_id": result.acceptance_id, "approver": result.approver, "expires_on": result.expires_on},
+        )
+        return result
+
+    @router.get("/scorecards/coverage", response_model=CoverageScorecard)
+    def coverage_scorecard_route() -> CoverageScorecard:
+        return coverage_scorecard(session_factory)
+
+    @router.get("/kpis/executive", response_model=ExecutiveKpis)
+    def executive_kpis_route() -> ExecutiveKpis:
+        return executive_kpis(session_factory)
 
     @router.get("/remediations/sla", response_model=list[RemediationSlaItem])
     def remediation_sla_route() -> list[RemediationSlaItem]:
