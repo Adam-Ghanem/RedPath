@@ -1,3 +1,5 @@
+![RedPath logo](frontend/public/assets/redpath-logo.png)
+
 # RedPath
 
 ## Advanced Internal Pentest & Attack Path Simulator
