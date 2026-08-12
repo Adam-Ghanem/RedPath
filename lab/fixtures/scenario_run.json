@@ -1,0 +1,22 @@
+{
+  "scenario_id": "ad.identity-exposure-baseline",
+  "observations": [
+    {
+      "asset_id": "DC-01",
+      "service_principal_name": "MSSQLSvc/db01.lab.local:1433"
+    },
+    {
+      "asset_id": "USER-07",
+      "preauth_disabled": true
+    }
+  ],
+  "alerts": [
+    {
+      "id": "lab-alert-001",
+      "rule": {
+        "description": "T1558.003 Kerberoasting signal"
+      }
+    }
+  ],
+  "dry_run": true
+}

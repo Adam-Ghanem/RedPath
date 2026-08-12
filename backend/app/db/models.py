@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
@@ -76,6 +77,23 @@ class GraphEdge(Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
 
 
+class AssessmentRun(Base):
+    __tablename__ = "assessment_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scenario_id: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="completed")
+    dry_run: Mapped[bool] = mapped_column(default=True)
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    coverage_percent: Mapped[float] = mapped_column(Float, default=0.0)
+    finding_count: Mapped[int] = mapped_column(Integer, default=0)
+    gap_count: Mapped[int] = mapped_column(Integer, default=0)
+    findings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PurpleRun(Base):
     __tablename__ = "purple_runs"
 
@@ -110,6 +128,10 @@ class AuditEvent(Base):
 
 
 def create_session_factory(database_url: str):
+    if database_url.startswith("sqlite:///"):
+        database_path = database_url.removeprefix("sqlite:///")
+        if database_path not in {":memory:", ""}:
+            Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     engine = create_engine(database_url, connect_args=connect_args)
     Base.metadata.create_all(engine)

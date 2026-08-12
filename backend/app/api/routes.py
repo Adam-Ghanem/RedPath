@@ -9,8 +9,10 @@ from fastapi.responses import FileResponse
 from app.core.audit import AuditLogger
 from app.core.config import Settings
 from app.core.scope import ScopePolicy, ScopeViolation
+from app.db.models import create_session_factory
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
+    AssessmentRunSummary,
     CorrelatedRisk,
     CorrelationRequest,
     DetectionGapReport,
@@ -20,6 +22,9 @@ from app.schemas.contracts import (
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
+    ScenarioRunRequest,
+    ScenarioRunResponse,
+    ScenarioSpec,
 )
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
@@ -28,6 +33,8 @@ from app.services.mitre import all_techniques
 from app.services.purple import build_detection_gap_report
 from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
+from app.services.scenario_runner import execute_scenario, list_run_summaries
+from app.services.scenarios import list_scenarios
 
 
 def build_router(settings: Settings) -> APIRouter:
@@ -35,6 +42,7 @@ def build_router(settings: Settings) -> APIRouter:
     scope = ScopePolicy.from_strings(settings.allowed_cidr_list)
     recon_service = ReconService(scope, timeout_seconds=settings.recon_timeout_seconds)
     audit = AuditLogger(settings.audit_log_path)
+    session_factory = create_session_factory(settings.database_url)
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
@@ -51,6 +59,34 @@ def build_router(settings: Settings) -> APIRouter:
     @router.get("/plugins")
     def plugins() -> list[dict]:
         return list_plugins()
+
+    @router.get("/scenarios", response_model=list[ScenarioSpec])
+    def scenarios() -> list[ScenarioSpec]:
+        return list_scenarios()
+
+    @router.get("/runs", response_model=list[AssessmentRunSummary])
+    def runs(limit: int = 20) -> list[AssessmentRunSummary]:
+        return list_run_summaries(session_factory, max(1, min(limit, 100)))
+
+    @router.post("/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse)
+    def scenario_run(scenario_id: str, request: ScenarioRunRequest) -> ScenarioRunResponse:
+        if request.scenario_id != scenario_id:
+            raise HTTPException(status_code=400, detail="scenario_id in path and body must match")
+        try:
+            result = execute_scenario(request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "scenario.completed",
+            {
+                "run_id": result.run_id,
+                "scenario_id": result.scenario_id,
+                "dry_run": result.dry_run,
+                "finding_count": result.finding_count,
+                "coverage_percent": result.coverage_percent,
+            },
+        )
+        return result
 
     @router.post("/recon", response_model=ReconResult)
     def recon(request: ReconRequest) -> ReconResult:

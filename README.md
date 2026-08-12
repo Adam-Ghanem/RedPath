@@ -46,6 +46,7 @@ The backend is organized around narrow, testable services. The recon module vali
 | Attack paths | NetworkX directed graph, Dijkstra shortest path, betweenness-centrality chokepoints |
 | CVSS | Score and vector fields in finding contracts and database schema |
 | Purple team | Imported Wazuh-style alert comparison and detection-gap recommendations |
+| Scenario library | Four safe playbooks, persisted assessment history, evidence-backed risk, and dry-run execution |
 | Reporting | FPDF2 report with executive summary, findings, MITRE mappings, gaps, and remediation |
 | Safety | Dry-run default, strict scope, no arbitrary shell, append-only chained audit log, no credential persistence |
 | Delivery | Docker Compose, React/Vite frontend, Pytest/Ruff/Bandit/Semgrep CI configuration |
@@ -100,7 +101,9 @@ RedPath/
 │   │   │   ├── graph_engine.py        # Dijkstra + centrality
 │   │   │   ├── purple.py               # Wazuh-style coverage comparator
 │   │   │   ├── wazuh.py                # Read-only indexer adapter
-│   │   │   └── report.py               # PDF export
+│   │   │   ├── report.py               # PDF export
+│   │   │   ├── scenarios.py            # Curated safe playbooks
+│   │   │   └── scenario_runner.py      # Evidence-to-run persistence
 │   │   └── main.py                    # FastAPI application
 │   ├── tests/test_core.py             # Core safety and analytics tests
 │   ├── Dockerfile
@@ -108,6 +111,7 @@ RedPath/
 ├── frontend/
 │   ├── src/App.tsx                    # Dashboard shell
 │   ├── src/components/AttackPathGraph.tsx
+│   ├── src/components/ScenarioPanel.tsx # Scenario execution + run history
 │   ├── src/data/mock.ts               # Safe demo dataset
 │   ├── src/index.css                  # Dark cyber visual system
 │   ├── Dockerfile
@@ -117,7 +121,9 @@ RedPath/
 │   ├── api.md
 │   ├── database.md
 │   ├── lab-setup.md
-│   └── roadmap.md
+│   ├── roadmap.md
+│   ├── scenarios.md
+├── lab/fixtures/                    # Synthetic AD, Wazuh, and scenario evidence
 ├── docker-compose.yml
 ├── pyproject.toml
 └── README.md
@@ -153,7 +159,8 @@ Read [docs/lab-setup.md](docs/lab-setup.md) before connecting any lab system. It
 
 ## Roadmap
 
-The staged plan is in [docs/roadmap.md](docs/roadmap.md). The clean onboarding evidence is recorded in [docs/validation.md](docs/validation.md), including dependency audit, 10-test backend validation, frontend production build, and Docker Compose service health. MVP is the safe evidence-to-graph loop. v1 adds a read-only Wazuh indexer workflow, report regression fixtures, and richer detection engineering. v2 adds the plugin SDK, graph snapshots, environmental risk modifiers, and signed run artifacts.
+The staged plan is in [docs/roadmap.md](docs/roadmap.md). The expanded scenario workflow is documented in [docs/scenarios.md](docs/scenarios.md). The clean onboarding evidence is recorded in [docs/validation.md](docs/validation.md), including dependency audit, 11-test backend validation, frontend production build, and Docker Compose service health. MVP is the safe evidence-to-graph loop.
+v1 adds a read-only Wazuh indexer workflow, report regression fixtures, and richer detection engineering. v2 adds the plugin SDK, graph snapshots, environmental risk modifiers, and signed run artifacts.
 
 ## References
 

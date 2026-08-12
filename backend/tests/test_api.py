@@ -32,6 +32,32 @@ def test_detection_and_risk_correlation_endpoints() -> None:
     assert risk.json()[0]["technique_id"] == "T1558.003"
 
 
+def test_scenario_catalog_and_persisted_run() -> None:
+    catalog = client.get("/api/v1/scenarios")
+    assert catalog.status_code == 200
+    scenario = next(item for item in catalog.json() if item["scenario_id"] == "ad.identity-exposure-baseline")
+    assert "T1558.003" in scenario["technique_ids"]
+
+    response = client.post(
+        "/api/v1/scenarios/ad.identity-exposure-baseline/run",
+        json={
+            "scenario_id": "ad.identity-exposure-baseline",
+            "observations": [{"asset_id": "DC-01", "service_principal_name": "MSSQLSvc/db01:1433"}],
+            "alerts": [{"id": "alert-1", "rule": {"description": "T1558.003 Kerberoasting"}}],
+            "dry_run": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["finding_count"] == 1
+    assert payload["coverage_percent"] == 50.0
+    assert payload["gaps"] == ["T1558.004"]
+
+    history = client.get("/api/v1/runs")
+    assert history.status_code == 200
+    assert any(item["run_id"] == payload["run_id"] for item in history.json())
+
+
 def test_purple_coverage_endpoint_returns_gap() -> None:
     response = client.post(
         "/api/v1/purple/analyze",

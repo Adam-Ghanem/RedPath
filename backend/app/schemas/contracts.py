@@ -125,6 +125,43 @@ class WazuhAlert(BaseModel):
     timestamp: str | None = None
 
 
+class ScenarioSpec(BaseModel):
+    scenario_id: str
+    name: str
+    objective: str
+    tactics: list[str] = Field(default_factory=list)
+    technique_ids: list[str] = Field(default_factory=list)
+    required_evidence: list[str] = Field(default_factory=list)
+    safety_notes: list[str] = Field(default_factory=list)
+    estimated_minutes: int = Field(default=10, ge=1, le=240)
+
+
+class ScenarioRunRequest(BaseModel):
+    scenario_id: str
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+    alerts: list[WazuhAlert] = Field(default_factory=list)
+    dry_run: bool = True
+
+
+class AssessmentRunSummary(BaseModel):
+    run_id: str
+    scenario_id: str
+    status: str
+    dry_run: bool
+    risk_score: float = Field(ge=0, le=100)
+    coverage_percent: float = Field(ge=0, le=100)
+    finding_count: int = Field(ge=0)
+    gap_count: int = Field(ge=0)
+    summary: str
+    created_at: datetime
+
+
+class ScenarioRunResponse(AssessmentRunSummary):
+    findings: list[FindingInput] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+
+
 class PurpleAnalysisRequest(BaseModel):
     expected_technique_ids: list[str] = Field(min_length=1)
     alerts: list[WazuhAlert] = Field(default_factory=list)

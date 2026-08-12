@@ -7,8 +7,12 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/health` | Service health and default mode | No external side effect |
 | GET | `/api/v1/scope` | Show allowed CIDRs and dry-run default | Does not expose credentials |
 | GET | `/api/v1/techniques` | Return supported MITRE mappings | Static registry read |
+| GET | `/api/v1/scenarios` | Return curated safe assessment playbooks | Static catalog read |
+| GET | `/api/v1/runs` | Return recent persisted assessment summaries | Local SQLite read |
 | POST | `/api/v1/recon` | Plan or run safe discovery | Validates every IP; dry-run wins over requested execution |
 | POST | `/api/v1/detections/ad` | Analyze exported AD observations | No AD connection; no attack execution |
+| POST | `/api/v1/risk/correlate` | Combine finding severity/CVSS and path relevance | Pure in-memory analysis |
+| POST | `/api/v1/scenarios/{scenario_id}/run` | Execute a safe evidence-driven scenario | Dry-run default; persists local summary only |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
 | POST | `/api/v1/purple/analyze` | Compare expected techniques against Wazuh-style alerts | Accepts imported evidence; no rule changes |
 | POST | `/api/v1/reports/pdf` | Generate a local PDF from findings and optional coverage | No external side effect |
@@ -36,6 +40,24 @@ The response returns a `scan_id`, the normalized targets, the generated argument
 ```
 
 Each observation becomes a typed finding with severity, evidence, CVSS score and vector, and a MITRE technique ID. The initial registry maps Kerberoasting to `T1558.003`, AS-REP Roasting to `T1558.004`, and authentication-certificate abuse to `T1649`.
+
+## Scenario execution request
+
+```json
+{
+  "scenario_id": "ad.identity-exposure-baseline",
+  "observations": [
+    {"asset_id": "DC-01", "service_principal_name": "MSSQLSvc/db01.lab.local:1433"},
+    {"asset_id": "USER-07", "preauth_disabled": true}
+  ],
+  "alerts": [
+    {"id": "alert-001", "rule": {"description": "T1558.003 Kerberoasting signal"}}
+  ],
+  "dry_run": true
+}
+```
+
+The scenario response combines findings, coverage, detection gaps, recommendations, and an explainable risk score. The run is persisted to `data/redpath.db` with no credentials or raw attack commands. `GET /api/v1/runs` returns summaries for the dashboard history view.
 
 ## Purple-team request
 

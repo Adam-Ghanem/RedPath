@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "RedPath"
     environment: str = "lab"
-    database_url: str = "sqlite:///./redpath.db"
+    database_url: str = "sqlite:///./data/redpath.db"
     allowed_cidrs: str = "192.168.56.0/24,10.10.10.0/24"
     dry_run: bool = True
     recon_timeout_seconds: int = 30
