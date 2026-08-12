@@ -143,7 +143,7 @@ npm run lint
 npm run build
 ```
 
-The CI workflow runs the same categories of checks and includes Semgrep as a policy gate. In an interview, the important discussion is not only that the checks pass, but what they protect: shell-injection resistance, scope enforcement, dependency hygiene, typed contracts, and regression coverage for the analytics layer.
+The CI definition runs the same categories of checks and includes Semgrep as a policy gate. It is available at [ci/redpath-ci.yml](ci/redpath-ci.yml), while [docs/ci-setup.md](docs/ci-setup.md) explains how an authorized repository maintainer can activate it under `.github/workflows/`. In an interview, the important discussion is not only that the checks pass, but what they protect: shell-injection resistance, scope enforcement, dependency hygiene, typed contracts, and regression coverage for the analytics layer.
 
 ## Lab guide
 
