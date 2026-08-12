@@ -153,7 +153,7 @@ Read [docs/lab-setup.md](docs/lab-setup.md) before connecting any lab system. It
 
 ## Roadmap
 
-The staged plan is in [docs/roadmap.md](docs/roadmap.md). MVP is the safe evidence-to-graph loop. v1 adds a read-only Wazuh indexer workflow, report regression fixtures, and richer detection engineering. v2 adds the plugin SDK, graph snapshots, environmental risk modifiers, and signed run artifacts.
+The staged plan is in [docs/roadmap.md](docs/roadmap.md). The clean onboarding evidence is recorded in [docs/validation.md](docs/validation.md), including dependency audit, 10-test backend validation, frontend production build, and Docker Compose service health. MVP is the safe evidence-to-graph loop. v1 adds a read-only Wazuh indexer workflow, report regression fixtures, and richer detection engineering. v2 adds the plugin SDK, graph snapshots, environmental risk modifiers, and signed run artifacts.
 
 ## References
 
