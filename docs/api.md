@@ -9,10 +9,17 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/techniques` | Return supported MITRE mappings | Static registry read |
 | GET | `/api/v1/scenarios` | Return curated safe assessment playbooks | Static catalog read |
 | GET | `/api/v1/runs` | Return recent persisted assessment summaries | Local SQLite read |
+| GET/POST | `/api/v1/campaigns` | Create and list bounded assessment campaigns | Local metadata only; audit logged |
+| POST | `/api/v1/campaigns/{campaign_id}/runs/{run_id}` | Link a completed scenario run to a campaign | Validates both IDs; no rerun |
+| GET | `/api/v1/campaigns/{campaign_id}/timeline` | Return ordered campaign evidence and remediation events | Local SQLite read |
 | POST | `/api/v1/recon` | Plan or run safe discovery | Validates every IP; dry-run wins over requested execution |
 | POST | `/api/v1/detections/ad` | Analyze exported AD observations | No AD connection; no attack execution |
 | POST | `/api/v1/risk/correlate` | Combine finding severity/CVSS and path relevance | Pure in-memory analysis |
 | POST | `/api/v1/scenarios/{scenario_id}/run` | Execute a safe evidence-driven scenario | Dry-run default; persists local summary only |
+| GET/POST | `/api/v1/evidence` | Register and list provenance metadata for imported evidence | Stores hash and metadata, never credentials |
+| GET/POST | `/api/v1/remediations` | Create and list remediation ownership items | Local workflow state; audit logged |
+| GET | `/api/v1/trends/risk` | Aggregate persisted risk and coverage by period | Derived from stored run records |
+| GET | `/api/v1/detection-tuning` | Return gap-driven rule-tuning queue | Recommendations only; no Wazuh mutation |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
 | POST | `/api/v1/purple/analyze` | Compare expected techniques against Wazuh-style alerts | Accepts imported evidence; no rule changes |
 | POST | `/api/v1/reports/pdf` | Generate a local PDF from findings and optional coverage | No external side effect |
@@ -58,6 +65,10 @@ Each observation becomes a typed finding with severity, evidence, CVSS score and
 ```
 
 The scenario response combines findings, coverage, detection gaps, recommendations, and an explainable risk score. The run is persisted to `data/redpath.db` with no credentials or raw attack commands. `GET /api/v1/runs` returns summaries for the dashboard history view.
+
+## Expert operations workflow
+
+A campaign is a bounded assessment context with an owner and scope snapshot. Evidence registration requires a source, evidence type, title, SHA-256 digest, and optional run/technique links. Remediation records add ownership, priority, due date, and lifecycle status. Trend points aggregate stored run records by period, while detection-tuning items convert recurring technique gaps into rule intent, event-source, and regression-fixture recommendations. These operations are metadata and evidence workflows only; RedPath does not modify AD, Wazuh, or external lab systems.
 
 ## Purple-team request
 

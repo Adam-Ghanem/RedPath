@@ -58,6 +58,73 @@ def test_scenario_catalog_and_persisted_run() -> None:
     assert any(item["run_id"] == payload["run_id"] for item in history.json())
 
 
+def test_expert_campaign_operations_and_trends() -> None:
+    campaign_response = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "Q3 Identity Exposure Review",
+            "objective": "Prioritize identity paths and close detection gaps in the isolated lab.",
+            "owner": "blue-team",
+            "scope_snapshot": ["192.168.56.0/24"],
+        },
+    )
+    assert campaign_response.status_code == 201
+    campaign = campaign_response.json()
+
+    run_response = client.post(
+        "/api/v1/scenarios/ad.identity-exposure-baseline/run",
+        json={
+            "scenario_id": "ad.identity-exposure-baseline",
+            "observations": [{"asset_id": "DC-01", "service_principal_name": "MSSQLSvc/db01:1433"}],
+            "alerts": [{"id": "alert-1", "rule": {"description": "T1558.003 Kerberoasting"}}],
+            "dry_run": True,
+        },
+    )
+    assert run_response.status_code == 200
+    run_id = run_response.json()["run_id"]
+
+    link_response = client.post(f"/api/v1/campaigns/{campaign['campaign_id']}/runs/{run_id}")
+    assert link_response.status_code == 204
+
+    evidence_response = client.post(
+        "/api/v1/evidence",
+        json={
+            "campaign_id": campaign["campaign_id"],
+            "run_id": run_id,
+            "evidence_type": "wazuh_alert_export",
+            "source": "lab/wazuh-alerts.json",
+            "title": "Kerberoasting detection evidence",
+            "sha256": "a" * 64,
+            "technique_id": "T1558.003",
+            "notes": "Synthetic evidence fixture for rule-tuning review.",
+        },
+    )
+    assert evidence_response.status_code == 201
+
+    remediation_response = client.post(
+        "/api/v1/remediations",
+        json={
+            "campaign_id": campaign["campaign_id"],
+            "finding_title": "Service principal on high-value account",
+            "technique_id": "T1558.003",
+            "recommendation": "Rotate the service account secret and add an identity-risk correlation rule.",
+            "owner": "identity-team",
+            "priority": "high",
+        },
+    )
+    assert remediation_response.status_code == 201
+
+    timeline = client.get(f"/api/v1/campaigns/{campaign['campaign_id']}/timeline")
+    assert timeline.status_code == 200
+    assert {item["event_type"] for item in timeline.json()} == {"assessment_run", "evidence", "remediation"}
+
+    trend = client.get("/api/v1/trends/risk")
+    tuning = client.get("/api/v1/detection-tuning")
+    assert trend.status_code == 200 and trend.json()
+    assert tuning.status_code == 200
+    assert any(item["technique_id"] == "T1558.004" for item in tuning.json())
+
+
 def test_purple_coverage_endpoint_returns_gap() -> None:
     response = client.post(
         "/api/v1/purple/analyze",

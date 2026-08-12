@@ -13,21 +13,42 @@ from app.db.models import create_session_factory
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
+    CampaignCreate,
+    CampaignResponse,
+    CampaignTimelineEvent,
     CorrelatedRisk,
     CorrelationRequest,
     DetectionGapReport,
+    DetectionTuningItem,
+    EvidenceCreate,
+    EvidenceResponse,
     FindingInput,
     GraphRequest,
     GraphResult,
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
+    RemediationCreate,
+    RemediationResponse,
     ScenarioRunRequest,
     ScenarioRunResponse,
     ScenarioSpec,
+    TrendPoint,
 )
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
+from app.services.expert_ops import (
+    campaign_timeline,
+    create_campaign,
+    create_evidence,
+    create_remediation,
+    detection_tuning_queue,
+    link_run,
+    list_campaigns,
+    list_evidence,
+    list_remediations,
+    risk_trend,
+)
 from app.services.graph_engine import analyze_attack_graph
 from app.services.mitre import all_techniques
 from app.services.purple import build_detection_gap_report
@@ -87,6 +108,65 @@ def build_router(settings: Settings) -> APIRouter:
             },
         )
         return result
+
+    @router.get("/campaigns", response_model=list[CampaignResponse])
+    def campaigns() -> list[CampaignResponse]:
+        return list_campaigns(session_factory)
+
+    @router.post("/campaigns", response_model=CampaignResponse, status_code=201)
+    def campaign_create(request: CampaignCreate) -> CampaignResponse:
+        result = create_campaign(request, session_factory)
+        audit.record("campaign.created", {"campaign_id": result.campaign_id, "owner": result.owner})
+        return result
+
+    @router.post("/campaigns/{campaign_id}/runs/{run_id}", status_code=204)
+    def campaign_link_run(campaign_id: str, run_id: str) -> None:
+        try:
+            link_run(campaign_id, run_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record("campaign.run_linked", {"campaign_id": campaign_id, "run_id": run_id})
+
+    @router.get("/campaigns/{campaign_id}/timeline", response_model=list[CampaignTimelineEvent])
+    def campaign_timeline_route(campaign_id: str) -> list[CampaignTimelineEvent]:
+        try:
+            return campaign_timeline(campaign_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/evidence", response_model=list[EvidenceResponse])
+    def evidence(campaign_id: str | None = None) -> list[EvidenceResponse]:
+        return list_evidence(session_factory, campaign_id)
+
+    @router.post("/evidence", response_model=EvidenceResponse, status_code=201)
+    def evidence_create(request: EvidenceCreate) -> EvidenceResponse:
+        try:
+            result = create_evidence(request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record("evidence.registered", {"evidence_id": result.evidence_id, "sha256": result.sha256})
+        return result
+
+    @router.get("/remediations", response_model=list[RemediationResponse])
+    def remediations(campaign_id: str | None = None) -> list[RemediationResponse]:
+        return list_remediations(session_factory, campaign_id)
+
+    @router.post("/remediations", response_model=RemediationResponse, status_code=201)
+    def remediation_create(request: RemediationCreate) -> RemediationResponse:
+        try:
+            result = create_remediation(request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record("remediation.created", {"remediation_id": result.remediation_id, "priority": result.priority})
+        return result
+
+    @router.get("/trends/risk", response_model=list[TrendPoint])
+    def risk_trends() -> list[TrendPoint]:
+        return risk_trend(session_factory)
+
+    @router.get("/detection-tuning", response_model=list[DetectionTuningItem])
+    def detection_tuning() -> list[DetectionTuningItem]:
+        return detection_tuning_queue(session_factory)
 
     @router.post("/recon", response_model=ReconResult)
     def recon(request: ReconRequest) -> ReconResult:

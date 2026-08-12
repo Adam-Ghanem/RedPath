@@ -162,6 +162,78 @@ class ScenarioRunResponse(AssessmentRunSummary):
     recommendations: list[str] = Field(default_factory=list)
 
 
+class CampaignCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=255)
+    objective: str = Field(min_length=10, max_length=2000)
+    owner: str = Field(default="security-team", min_length=2, max_length=128)
+    scope_snapshot: list[str] = Field(default_factory=list)
+
+
+class CampaignResponse(CampaignCreate):
+    campaign_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class EvidenceCreate(BaseModel):
+    campaign_id: str | None = None
+    run_id: str | None = None
+    evidence_type: str = Field(min_length=2, max_length=64)
+    source: str = Field(min_length=2, max_length=255)
+    title: str = Field(min_length=3, max_length=255)
+    sha256: str = Field(min_length=64, max_length=64)
+    technique_id: str | None = None
+    notes: str = Field(default="", max_length=4000)
+
+
+class EvidenceResponse(EvidenceCreate):
+    evidence_id: str
+    review_status: str
+    created_at: datetime
+
+
+class RemediationCreate(BaseModel):
+    campaign_id: str | None = None
+    finding_title: str = Field(min_length=3, max_length=255)
+    technique_id: str | None = None
+    recommendation: str = Field(min_length=10, max_length=4000)
+    owner: str = Field(default="unassigned", min_length=2, max_length=128)
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+    due_date: str | None = None
+
+
+class RemediationResponse(RemediationCreate):
+    remediation_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrendPoint(BaseModel):
+    period: str
+    average_risk_score: float = Field(ge=0, le=100)
+    average_coverage_percent: float = Field(ge=0, le=100)
+    run_count: int = Field(ge=0)
+
+
+class DetectionTuningItem(BaseModel):
+    technique_id: str
+    gap_count: int = Field(ge=0)
+    priority: Literal["low", "medium", "high"]
+    rule_intent: str
+    event_sources: list[str] = Field(default_factory=list)
+    regression_fixture: str
+
+
+class CampaignTimelineEvent(BaseModel):
+    event_type: str
+    reference_id: str
+    title: str
+    status: str
+    occurred_at: datetime
+
+
 class PurpleAnalysisRequest(BaseModel):
     expected_technique_ids: list[str] = Field(min_length=1)
     alerts: list[WazuhAlert] = Field(default_factory=list)

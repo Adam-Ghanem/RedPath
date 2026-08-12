@@ -77,6 +77,60 @@ class GraphEdge(Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
 
 
+class Campaign(Base):
+    __tablename__ = "campaigns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    objective: Mapped[str] = mapped_column(Text)
+    owner: Mapped[str] = mapped_column(String(128), default="security-team")
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    scope_snapshot: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CampaignRunLink(Base):
+    __tablename__ = "campaign_run_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("assessment_runs.id"), index=True)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EvidenceItem(Base):
+    __tablename__ = "evidence_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("assessment_runs.id"), nullable=True, index=True)
+    evidence_type: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64))
+    technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    review_status: Mapped[str] = mapped_column(String(32), default="unreviewed", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RemediationItem(Base):
+    __tablename__ = "remediation_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
+    finding_title: Mapped[str] = mapped_column(String(255))
+    technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    recommendation: Mapped[str] = mapped_column(Text)
+    owner: Mapped[str] = mapped_column(String(128), default="unassigned")
+    priority: Mapped[str] = mapped_column(String(16), default="medium", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+    due_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AssessmentRun(Base):
     __tablename__ = "assessment_runs"
 

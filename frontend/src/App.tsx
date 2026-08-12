@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AttackPathGraph from "./components/AttackPathGraph";
+import ExpertOpsPanel from "./components/ExpertOpsPanel";
 import ScenarioPanel from "./components/ScenarioPanel";
 import { coverage, graphEdges, graphNodes } from "./data/mock";
 
@@ -51,6 +52,7 @@ function App() {
           <a className="nav-item active" href="#overview"><span>◈</span>Overview</a>
           <a className="nav-item" href="#attack-graph"><span>⌁</span>Attack paths</a>
           <a className="nav-item" href="#scenarios"><span>▣</span>Scenario library</a>
+          <a className="nav-item" href="#campaigns"><span>◌</span>Campaign operations</a>
           <a className="nav-item" href="#coverage"><span>⊕</span>Detection coverage</a>
           <a className="nav-item" href="#findings"><span>◇</span>Findings</a>
           <a className="nav-item" href="#reports"><span>▤</span>Reports</a>
@@ -66,6 +68,7 @@ function App() {
         <section className="metric-grid" aria-label="Risk summary"><MetricCard label="Risk score" value="78 / 100" tone="danger" note="+12 since last run" /><MetricCard label="Assets observed" value="24" tone="cyan" note="6 identity-bearing" /><MetricCard label="Open findings" value="09" tone="amber" note="3 high · 1 critical" /><MetricCard label="Detection coverage" value="66.7%" tone="lime" note="2 of 3 mapped techniques" /></section>
 
         <ScenarioPanel apiOnline={apiOnline} onActivity={setLastAction} />
+        <ExpertOpsPanel apiOnline={apiOnline} onActivity={setLastAction} />
 
         <section className="content-grid">
           <article id="attack-graph" className="panel graph-panel"><div className="panel-heading"><div><span className="eyebrow">Path analysis / weighted graph</span><h3>Shortest route to Domain Admin</h3></div><span className="panel-tag">DIJKSTRA + CENTRALITY</span></div><AttackPathGraph nodes={graphNodes} edges={graphEdges} /><div className="legend"><span><i className="legend-dot observed" />Observed asset</span><span><i className="legend-dot chokepoint" />Chokepoint</span><span><i className="legend-dot goal" />Privilege goal</span></div></article>
