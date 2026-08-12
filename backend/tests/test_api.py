@@ -125,6 +125,56 @@ def test_expert_campaign_operations_and_trends() -> None:
     assert any(item["technique_id"] == "T1558.004" for item in tuning.json())
 
 
+def test_enterprise_integrity_manifests_sla_and_export() -> None:
+    campaign = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "Integrity Control Review",
+            "objective": "Verify evidence provenance and remediation governance controls.",
+        },
+    ).json()
+    evidence = client.post(
+        "/api/v1/evidence",
+        json={
+            "campaign_id": campaign["campaign_id"],
+            "evidence_type": "fixture",
+            "source": "lab/fixtures/ad_observations.json",
+            "title": "AD observation manifest",
+            "sha256": "b" * 64,
+            "technique_id": "T1558.004",
+        },
+    )
+    assert evidence.status_code == 201
+
+    manifest = client.get(f"/api/v1/evidence/{evidence.json()['evidence_id']}/manifest")
+    assert manifest.status_code == 200
+    assert len(manifest.json()["manifest_sha256"]) == 64
+
+    remediation = client.post(
+        "/api/v1/remediations",
+        json={
+            "campaign_id": campaign["campaign_id"],
+            "finding_title": "Review account pre-authentication state",
+            "technique_id": "T1558.004",
+            "recommendation": "Enable pre-authentication and add a regression detection fixture.",
+            "owner": "identity-team",
+            "priority": "high",
+        },
+    )
+    assert remediation.status_code == 201
+
+    sla = client.get("/api/v1/remediations/sla")
+    export = client.get(f"/api/v1/campaigns/{campaign['campaign_id']}/export")
+    integrity = client.get("/api/v1/integrity/audit")
+    assert sla.status_code == 200
+    assert any(item["remediation_id"] == remediation.json()["remediation_id"] for item in sla.json())
+    assert export.status_code == 200
+    assert len(export.json()["manifest_sha256"]) == 64
+    assert export.json()["evidence"][0]["evidence_id"] == evidence.json()["evidence_id"]
+    assert integrity.status_code == 200
+    assert integrity.json()["valid"] is True
+
+
 def test_purple_coverage_endpoint_returns_gap() -> None:
     response = client.post(
         "/api/v1/purple/analyze",

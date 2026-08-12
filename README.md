@@ -48,6 +48,7 @@ The backend is organized around narrow, testable services. The recon module vali
 | Purple team | Imported Wazuh-style alert comparison and detection-gap recommendations |
 | Scenario library | Four safe playbooks, persisted assessment history, evidence-backed risk, and dry-run execution |
 | Expert operations | Campaigns, evidence provenance, remediation ownership, risk trends, and detection-tuning queue |
+| Enterprise controls | Audit-chain verification, evidence manifests, remediation SLA posture, and deterministic campaign exports |
 | Reporting | FPDF2 report with executive summary, findings, MITRE mappings, gaps, and remediation |
 | Safety | Dry-run default, strict scope, no arbitrary shell, append-only chained audit log, no credential persistence |
 | Delivery | Docker Compose, React/Vite frontend, Pytest/Ruff/Bandit/Semgrep CI configuration |
@@ -125,6 +126,7 @@ RedPath/
 │   ├── roadmap.md
 │   ├── scenarios.md
 │   ├── v2-architecture.md
+│   ├── enterprise-controls.md
 ├── lab/fixtures/                    # Synthetic AD, Wazuh, and scenario evidence
 ├── docker-compose.yml
 ├── pyproject.toml
@@ -161,7 +163,7 @@ Read [docs/lab-setup.md](docs/lab-setup.md) before connecting any lab system. It
 
 ## Roadmap
 
-The staged plan is in [docs/roadmap.md](docs/roadmap.md). The expanded scenario workflow is documented in [docs/scenarios.md](docs/scenarios.md), and the expert-level domain model is in [docs/v2-architecture.md](docs/v2-architecture.md). The clean onboarding evidence is recorded in [docs/validation.md](docs/validation.md), including dependency audit, 12-test backend validation, frontend production build, and Docker Compose service health.
+The staged plan is in [docs/roadmap.md](docs/roadmap.md). The expanded scenario workflow is documented in [docs/scenarios.md](docs/scenarios.md), the expert-level domain model is in [docs/v2-architecture.md](docs/v2-architecture.md), and enterprise controls are specified in [docs/enterprise-controls.md](docs/enterprise-controls.md). The clean onboarding evidence is recorded in [docs/validation.md](docs/validation.md), including dependency audit, 13-test backend validation, frontend production build, and Docker Compose service health.
 MVP is the safe evidence-to-graph loop.
 v1 adds a read-only Wazuh indexer workflow, report regression fixtures, and richer detection engineering. v2 adds the plugin SDK, graph snapshots, environmental risk modifiers, and signed run artifacts.
 

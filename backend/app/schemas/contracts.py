@@ -226,12 +226,49 @@ class DetectionTuningItem(BaseModel):
     regression_fixture: str
 
 
+class IntegrityVerification(BaseModel):
+    valid: bool
+    event_count: int = Field(ge=0)
+    tail_digest: str
+    first_invalid_event_id: str | None = None
+    error: str | None = None
+
+
+class EvidenceManifest(BaseModel):
+    evidence_id: str
+    canonical_payload: str
+    manifest_sha256: str
+    generated_at: datetime
+
+
+class RemediationSlaItem(BaseModel):
+    remediation_id: str
+    finding_title: str
+    priority: str
+    status: str
+    owner: str
+    due_date: str | None = None
+    target_days: int = Field(ge=1)
+    state: Literal["on_track", "due_soon", "overdue", "closed"]
+
+
 class CampaignTimelineEvent(BaseModel):
     event_type: str
     reference_id: str
     title: str
     status: str
     occurred_at: datetime
+
+
+class CampaignExport(BaseModel):
+    campaign: CampaignResponse
+    timeline: list[CampaignTimelineEvent] = Field(default_factory=list)
+    evidence: list[EvidenceResponse] = Field(default_factory=list)
+    remediations: list[RemediationResponse] = Field(default_factory=list)
+    trend: list[TrendPoint] = Field(default_factory=list)
+    detection_tuning: list[DetectionTuningItem] = Field(default_factory=list)
+    manifest_sha256: str
+    generated_at: datetime
 
 
 class PurpleAnalysisRequest(BaseModel):

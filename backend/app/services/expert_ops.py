@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from uuid import uuid4
 
 from app.db.models import AssessmentRun, Campaign, CampaignRunLink, EvidenceItem, RemediationItem, utcnow
 from app.schemas.contracts import (
     CampaignCreate,
+    CampaignExport,
     CampaignResponse,
     CampaignTimelineEvent,
     DetectionTuningItem,
     EvidenceCreate,
+    EvidenceManifest,
     EvidenceResponse,
     RemediationCreate,
     RemediationResponse,
+    RemediationSlaItem,
     TrendPoint,
 )
 
@@ -281,3 +286,99 @@ def detection_tuning_queue(session_factory: SessionFactory) -> list[DetectionTun
             )
         )
     return sorted(items, key=lambda item: (-item.gap_count, item.technique_id))
+
+
+_SLA_DAYS = {"critical": 7, "high": 14, "medium": 30, "low": 60}
+
+
+def evidence_manifest(evidence_id: str, session_factory: SessionFactory) -> EvidenceManifest:
+    with session_factory() as session:
+        row = session.get(EvidenceItem, evidence_id)
+    if row is None:
+        raise KeyError(f"Unknown evidence: {evidence_id}")
+    payload = {
+        "evidence_id": row.id,
+        "campaign_id": row.campaign_id,
+        "run_id": row.run_id,
+        "evidence_type": row.evidence_type,
+        "source": row.source,
+        "title": row.title,
+        "sha256": row.sha256,
+        "technique_id": row.technique_id,
+        "review_status": row.review_status,
+        "notes": row.notes,
+    }
+    canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return EvidenceManifest(
+        evidence_id=row.id,
+        canonical_payload=canonical_payload,
+        manifest_sha256=hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+def remediation_sla(session_factory: SessionFactory) -> list[RemediationSlaItem]:
+    now = datetime.now(timezone.utc)
+    with session_factory() as session:
+        rows = session.query(RemediationItem).order_by(RemediationItem.updated_at.desc()).all()
+    results: list[RemediationSlaItem] = []
+    for row in rows:
+        target_days = _SLA_DAYS.get(row.priority, _SLA_DAYS["medium"])
+        due = (
+            date.fromisoformat(row.due_date)
+            if row.due_date
+            else row.created_at.date() + timedelta(days=target_days)
+        )
+        if row.status in {"closed", "resolved"}:
+            state = "closed"
+        elif due < now.date():
+            state = "overdue"
+        elif (due - now.date()).days <= max(2, target_days // 5):
+            state = "due_soon"
+        else:
+            state = "on_track"
+        results.append(
+            RemediationSlaItem(
+                remediation_id=row.id,
+                finding_title=row.finding_title,
+                priority=row.priority,
+                status=row.status,
+                owner=row.owner,
+                due_date=due.isoformat(),
+                target_days=target_days,
+                state=state,
+            )
+        )
+    return results
+
+
+def campaign_export(campaign_id: str, session_factory: SessionFactory) -> CampaignExport:
+    with session_factory() as session:
+        campaign_row = session.get(Campaign, campaign_id)
+    if campaign_row is None:
+        raise KeyError(f"Unknown campaign: {campaign_id}")
+    campaign = _campaign_response(campaign_row)
+    timeline = campaign_timeline(campaign_id, session_factory)
+    evidence = list_evidence(session_factory, campaign_id)
+    remediations = list_remediations(session_factory, campaign_id)
+    trend = risk_trend(session_factory)
+    tuning = detection_tuning_queue(session_factory)
+    package = {
+        "campaign": campaign.model_dump(mode="json"),
+        "timeline": [item.model_dump(mode="json") for item in timeline],
+        "evidence": [item.model_dump(mode="json") for item in evidence],
+        "remediations": [item.model_dump(mode="json") for item in remediations],
+        "trend": [item.model_dump(mode="json") for item in trend],
+        "detection_tuning": [item.model_dump(mode="json") for item in tuning],
+    }
+    canonical = json.dumps(package, sort_keys=True, separators=(",", ":"))
+    return CampaignExport(
+        campaign=campaign,
+        timeline=timeline,
+        evidence=evidence,
+        remediations=remediations,
+        trend=trend,
+        detection_tuning=tuning,
+        manifest_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        generated_at=datetime.now(timezone.utc),
+    )

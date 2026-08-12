@@ -14,6 +14,7 @@ from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
     CampaignCreate,
+    CampaignExport,
     CampaignResponse,
     CampaignTimelineEvent,
     CorrelatedRisk,
@@ -21,15 +22,18 @@ from app.schemas.contracts import (
     DetectionGapReport,
     DetectionTuningItem,
     EvidenceCreate,
+    EvidenceManifest,
     EvidenceResponse,
     FindingInput,
     GraphRequest,
     GraphResult,
+    IntegrityVerification,
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
     RemediationCreate,
     RemediationResponse,
+    RemediationSlaItem,
     ScenarioRunRequest,
     ScenarioRunResponse,
     ScenarioSpec,
@@ -38,15 +42,18 @@ from app.schemas.contracts import (
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
 from app.services.expert_ops import (
+    campaign_export,
     campaign_timeline,
     create_campaign,
     create_evidence,
     create_remediation,
     detection_tuning_queue,
+    evidence_manifest,
     link_run,
     list_campaigns,
     list_evidence,
     list_remediations,
+    remediation_sla,
     risk_trend,
 )
 from app.services.graph_engine import analyze_attack_graph
@@ -134,9 +141,20 @@ def build_router(settings: Settings) -> APIRouter:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @router.get("/integrity/audit", response_model=IntegrityVerification)
+    def audit_integrity() -> IntegrityVerification:
+        return IntegrityVerification(**audit.verify())
+
     @router.get("/evidence", response_model=list[EvidenceResponse])
     def evidence(campaign_id: str | None = None) -> list[EvidenceResponse]:
         return list_evidence(session_factory, campaign_id)
+
+    @router.get("/evidence/{evidence_id}/manifest", response_model=EvidenceManifest)
+    def evidence_manifest_route(evidence_id: str) -> EvidenceManifest:
+        try:
+            return evidence_manifest(evidence_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.post("/evidence", response_model=EvidenceResponse, status_code=201)
     def evidence_create(request: EvidenceCreate) -> EvidenceResponse:
@@ -160,9 +178,20 @@ def build_router(settings: Settings) -> APIRouter:
         audit.record("remediation.created", {"remediation_id": result.remediation_id, "priority": result.priority})
         return result
 
+    @router.get("/remediations/sla", response_model=list[RemediationSlaItem])
+    def remediation_sla_route() -> list[RemediationSlaItem]:
+        return remediation_sla(session_factory)
+
     @router.get("/trends/risk", response_model=list[TrendPoint])
     def risk_trends() -> list[TrendPoint]:
         return risk_trend(session_factory)
+
+    @router.get("/campaigns/{campaign_id}/export", response_model=CampaignExport)
+    def campaign_export_route(campaign_id: str) -> CampaignExport:
+        try:
+            return campaign_export(campaign_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/detection-tuning", response_model=list[DetectionTuningItem])
     def detection_tuning() -> list[DetectionTuningItem]:

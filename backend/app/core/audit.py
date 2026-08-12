@@ -21,6 +21,59 @@ class AuditLogger:
                 if line.strip():
                     self._previous_digest = json.loads(line)["digest"]
 
+    def verify(self) -> dict[str, Any]:
+        previous_digest = "GENESIS"
+        event_count = 0
+        if not self.path.exists():
+            return {
+                "valid": True,
+                "event_count": 0,
+                "tail_digest": previous_digest,
+                "first_invalid_event_id": None,
+                "error": None,
+            }
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event_count += 1
+            try:
+                event = json.loads(line)
+                digest = event.pop("digest")
+                if event.get("previous_digest") != previous_digest:
+                    return {
+                        "valid": False,
+                        "event_count": event_count,
+                        "tail_digest": previous_digest,
+                        "first_invalid_event_id": event.get("event_id"),
+                        "error": "previous_digest_mismatch",
+                    }
+                payload = json.dumps(event, sort_keys=True, separators=(",", ":"))
+                expected_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                if digest != expected_digest:
+                    return {
+                        "valid": False,
+                        "event_count": event_count,
+                        "tail_digest": previous_digest,
+                        "first_invalid_event_id": event.get("event_id"),
+                        "error": "digest_mismatch",
+                    }
+                previous_digest = digest
+            except (KeyError, json.JSONDecodeError, TypeError):
+                return {
+                    "valid": False,
+                    "event_count": event_count,
+                    "tail_digest": previous_digest,
+                    "first_invalid_event_id": None,
+                    "error": "malformed_event",
+                }
+        return {
+            "valid": True,
+            "event_count": event_count,
+            "tail_digest": previous_digest,
+            "first_invalid_event_id": None,
+            "error": None,
+        }
+
     def record(self, operation: str, details: dict[str, Any], *, actor: str = "api") -> str:
         event_id = str(uuid.uuid4())
         event = {

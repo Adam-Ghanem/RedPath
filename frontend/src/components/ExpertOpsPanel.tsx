@@ -5,6 +5,8 @@ type Evidence = { evidence_id: string; title: string; evidence_type: string; sou
 type Remediation = { remediation_id: string; finding_title: string; technique_id?: string; owner: string; priority: string; status: string };
 type TrendPoint = { period: string; average_risk_score: number; average_coverage_percent: number; run_count: number };
 type TuningItem = { technique_id: string; gap_count: number; priority: string; rule_intent: string; event_sources: string[]; regression_fixture: string };
+type Integrity = { valid: boolean; event_count: number; tail_digest: string; error: string | null };
+type SlaItem = { remediation_id: string; finding_title: string; priority: string; status: string; owner: string; due_date: string; target_days: number; state: string };
 
 const API_BASE = "/api/v1";
 
@@ -32,6 +34,8 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
   const [remediations, setRemediations] = useState<Remediation[]>([]);
   const [trend, setTrend] = useState<TrendPoint[]>(seededTrend);
   const [tuning, setTuning] = useState<TuningItem[]>([]);
+  const [integrity, setIntegrity] = useState<Integrity>({ valid: true, event_count: 0, tail_digest: "GENESIS", error: null });
+  const [sla, setSla] = useState<SlaItem[]>([]);
   const [selectedId, setSelectedId] = useState(seededCampaign.campaign_id);
   const [creating, setCreating] = useState(false);
   const selected = useMemo(() => campaigns.find((item) => item.campaign_id === selectedId) ?? campaigns[0], [campaigns, selectedId]);
@@ -44,7 +48,9 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
       fetch(`${API_BASE}/remediations`),
       fetch(`${API_BASE}/trends/risk`),
       fetch(`${API_BASE}/detection-tuning`),
-    ]).then(async ([campaignResponse, evidenceResponse, remediationResponse, trendResponse, tuningResponse]) => {
+      fetch(`${API_BASE}/integrity/audit`),
+      fetch(`${API_BASE}/remediations/sla`),
+    ]).then(async ([campaignResponse, evidenceResponse, remediationResponse, trendResponse, tuningResponse, integrityResponse, slaResponse]) => {
       if (campaignResponse.ok) {
         const items = await campaignResponse.json();
         setCampaigns(items.length ? items : [seededCampaign]);
@@ -54,6 +60,8 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
       if (remediationResponse.ok) setRemediations(await remediationResponse.json());
       if (trendResponse.ok) setTrend(await trendResponse.json());
       if (tuningResponse.ok) setTuning(await tuningResponse.json());
+      if (integrityResponse.ok) setIntegrity(await integrityResponse.json());
+      if (slaResponse.ok) setSla(await slaResponse.json());
     }).catch(() => onActivity("Expert operations API unavailable; seeded campaign workspace remains active."));
   }, [apiOnline, onActivity]);
 
@@ -86,9 +94,32 @@ export default function ExpertOpsPanel({ apiOnline, onActivity }: { apiOnline: b
     }
   }
 
+  async function exportCampaign() {
+    if (!selected || !apiOnline) {
+      onActivity("Export is staged in demo mode; connect the API for a deterministic package.");
+      return;
+    }
+    const response = await fetch(`${API_BASE}/campaigns/${selected.campaign_id}/export`);
+    if (!response.ok) {
+      onActivity("Campaign export failed safely; no external system was modified.");
+      return;
+    }
+    const blob = await response.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${selected.campaign_id}-export.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    onActivity(`Exported evidence package for ${selected.name}.`);
+  }
+
   const maxRisk = Math.max(...trend.map((item) => item.average_risk_score), 1);
   return (
     <section id="campaigns" className="expert-ops-grid">
+      <article className="panel control-posture">
+        <div className="panel-heading"><div><span className="eyebrow">Enterprise controls / chain of custody</span><h3>Integrity & export posture</h3></div><span className={`integrity-badge ${integrity.valid ? "valid" : "invalid"}`}>{integrity.valid ? "CHAIN VALID" : "CHAIN BROKEN"}</span></div>
+        <div className="control-posture-grid"><div><strong>{integrity.event_count}</strong><small>audit events verified</small></div><div><strong>{sla.filter((item) => item.state === "overdue").length}</strong><small>overdue SLA actions</small></div><div><strong>{evidence.length}</strong><small>evidence records</small></div><button className="small-button" onClick={exportCampaign}>Export campaign package</button></div>
+      </article>
       <article className="panel campaign-panel">
         <div className="panel-heading"><div><span className="eyebrow">Operations / campaign context</span><h3>Assessment campaigns</h3></div><button className="small-button" onClick={createCampaign} disabled={creating}>{creating ? "Creating…" : "+ New campaign"}</button></div>
         <div className="campaign-list">{campaigns.map((campaign) => <button className={`campaign-row ${selected?.campaign_id === campaign.campaign_id ? "selected" : ""}`} key={campaign.campaign_id} onClick={() => setSelectedId(campaign.campaign_id)}><span className="campaign-status" /><span><strong>{campaign.name}</strong><small>{campaign.owner} · {campaign.scope_snapshot.join(", ")}</small></span><em>{campaign.status}</em></button>)}</div>
