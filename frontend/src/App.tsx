@@ -63,14 +63,15 @@ export default function Home() {
       <main id="top">
         <section className="hero section-shell">
           <div className="hero-copy">
-            <div className="eyebrow"><span className="pulse-dot" /> Safe-by-design AD exposure intelligence</div>
-            <h1>See the path.<br /><em>Prove the gap.</em></h1>
-            <p className="hero-lede">RedPath transforms synthetic Active Directory observations into explainable attack paths, defensive coverage gaps, and remediation decisions your team can act on.</p>
+            <div className="eyebrow"><span className="pulse-dot" /> Case RP-101 · Cyber risk briefing</div>
+            <h1>Every path<br />leaves <em>evidence.</em></h1>
+            <p className="hero-lede">RedPath maps synthetic Active Directory trust paths, exposes critical risk, and turns technical evidence into a precise remediation decision.</p>
+            <div className="case-file-badge"><div><span>CASE ID</span><strong>RP-101</strong></div><div><span>STATUS</span><b>ACTIVE</b></div></div>
             <div className="hero-actions"><a className="button primary" href="#explore"><Crosshair size={16} /> Open interactive lab</a><a className="button secondary" href="#github"><GitPullRequest size={16} /> View repository assets</a></div>
             <div className="hero-proof"><span><CheckCircle2 size={15} /> 100% synthetic lab data</span><span><CheckCircle2 size={15} /> zero configuration</span><span><CheckCircle2 size={15} /> safe dry-run only</span></div>
           </div>
           <div className="hero-panel" aria-label="RedPath operational overview">
-            <div className="panel-window-bar"><span /><span /><span /><div>redpath://overview</div><CircleDotDashed size={15} /></div>
+            <div className="panel-window-bar"><span /><span /><span /><div>ATTACK PATH DIAGRAM / RP-101</div><CircleDotDashed size={15} /></div>
             <div className="hero-panel-content">
               <div className="hero-score"><div className="score-ring"><span>{coverage}<small>%</small></span></div><div><span className="metric-label">Detection coverage</span><strong>12 <small>/ 16 expected signals</small></strong><p>Three high-priority defensive gaps are ready for review.</p></div></div>
               <div className="path-preview"><div className="preview-label"><span>Shortest critical path</span><b>8 weighted hops</b></div><div className="preview-route"><span>WS-21</span><ChevronRight size={13} /><span>APP-01</span><ChevronRight size={13} /><span className="route-hot">svc-backup</span><ChevronRight size={13} /><span>DC-01</span></div></div>
