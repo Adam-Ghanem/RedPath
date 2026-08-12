@@ -45,7 +45,7 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark">R</div><div><strong>REDPATH</strong><span>ATTACK PATH CONSOLE</span></div></div>
+        <div className="brand"><img className="brand-logo" src="/assets/redpath-logo.png" alt="RedPath logo" /><div><strong>REDPATH</strong><span>ATTACK PATH CONSOLE</span></div></div>
         <nav className="nav-stack" aria-label="Primary navigation">
           <a className="nav-item active" href="#overview"><span>◈</span>Overview</a>
           <a className="nav-item" href="#attack-graph"><span>⌁</span>Attack paths</a>

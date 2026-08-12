@@ -11,8 +11,7 @@ a { color: inherit; text-decoration: none; }
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar { width: 246px; min-height: 100vh; padding: 30px 18px 24px; border-right: 1px solid #1f3553; background: rgba(8, 17, 31, .88); display: flex; flex-direction: column; }
 .brand { display: flex; gap: 11px; align-items: center; padding: 0 10px 40px; }
-.brand-mark { width: 32px; height: 32px; border: 1px solid #49d7e8; color: #49d7e8; display: grid; place-items: center; font-weight: 800; font-size: 18px; transform: rotate(45deg); }
-.brand-mark::first-letter { transform: rotate(-45deg); }
+.brand-logo { width: 34px; height: 34px; border-radius: 9px; object-fit: cover; border: 1px solid rgba(255, 37, 48, .65); box-shadow: 0 0 18px rgba(255, 37, 48, .18); }
 .brand strong { display: block; letter-spacing: .17em; font-size: 13px; }
 .brand span { display: block; margin-top: 3px; color: #7087a7; font-size: 8px; letter-spacing: .13em; }
 .nav-stack { display: grid; gap: 6px; }
