@@ -67,7 +67,7 @@ export default function Home() {
   return (
     <div className="redpath-app">
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="RedPath home"><span className="brand-mark"><img className="brand-logo" src="/assets/redpath-logo-transparent.png" alt="" /></span><span>REDPATH</span><small>v0.1.0</small></a>
+        <a className="brand" href="#top" aria-label="RedPath home"><span className="brand-mark"><img className="brand-logo" src="/assets/redpath-red-fang.png" alt="" /></span><span>REDPATH</span><small>v0.1.0</small></a>
         <nav className="site-nav" aria-label="Primary navigation">
           <a href="#findings">Evidence</a><a href="#explore">Path analysis</a><a href="#scenarios">Remediation</a>
         </nav>
@@ -76,14 +76,14 @@ export default function Home() {
 
       <main id="top">
         <section className="hero section-shell">
-          <div className="case-logo" aria-hidden="true"><img src="/assets/redpath-logo-transparent.png" alt="" /></div>
+          <div className="case-logo" aria-hidden="true"><img src="/assets/redpath-red-fang.png" alt="" /></div>
           <div className="case-index-rail" aria-hidden="true"><span>01</span><span>02</span><span>03</span><span>04</span></div>
           <div className="hero-copy">
             <div className="eyebrow"><span className="pulse-dot" /> Case RP-101 · Cyber risk briefing</div>
             <h1>Every path<br />leaves <em>evidence</em></h1>
             <p className="hero-lede">RedPath maps synthetic Active Directory trust paths, exposes critical risk, and turns technical evidence into a precise remediation decision.</p>
             <div className="case-file-badge"><div><span>CASE ID</span><strong>RP-101</strong></div><div><span>STATUS</span><b>ACTIVE</b></div><div className="case-opened"><span>OPENED</span><b>14 MAY 2025 · 09:42 UTC</b></div></div>
-            <div className="case-stamp-row"><div className="forensic-seal"><img src="/assets/redpath-logo-transparent.png" alt="" /><span>REDPATH FORENSIC INTELLIGENCE</span></div><div className="risk-stamp">HIGH<br />RISK<small>CRITICAL PATH</small></div></div>
+            <div className="case-stamp-row"><div className="forensic-seal"><img src="/assets/redpath-red-fang.png" alt="" /><span>REDPATH FORENSIC INTELLIGENCE</span></div><div className="risk-stamp">HIGH<br />RISK<small>CRITICAL PATH</small></div></div>
             <div className="hero-actions"><a className="button primary" href="#explore"><Crosshair size={16} /> Open interactive lab</a><a className="button secondary" href="#github"><GitPullRequest size={16} /> View repository assets</a></div>
             <div className="hero-proof"><span><CheckCircle2 size={15} /> 100% synthetic lab data</span><span><CheckCircle2 size={15} /> zero configuration</span><span><CheckCircle2 size={15} /> safe dry-run only</span></div>
           </div>
