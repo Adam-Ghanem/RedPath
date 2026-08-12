@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://github.com/Adam-Ghanem/RedPath">
+    <img src="assets/redpath-logo.png" alt="RedPath logo" width="144" />
+  </a>
+</p>
+
 # RedPath
 
 > **See the path. Prove the gap.**
