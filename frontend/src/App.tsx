@@ -62,6 +62,7 @@ export default function Home() {
 
       <main id="top">
         <section className="hero section-shell">
+          <div className="case-logo" aria-hidden="true"><img src="/assets/redpath-logo-transparent.png" alt="" /></div>
           <div className="case-index-rail" aria-hidden="true"><span>01</span><span>02</span><span>03</span><span>04</span></div>
           <div className="hero-copy">
             <div className="eyebrow"><span className="pulse-dot" /> Case RP-101 · Cyber risk briefing</div>
