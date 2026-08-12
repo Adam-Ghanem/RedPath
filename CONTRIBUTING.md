@@ -2,6 +2,12 @@
 
 RedPath welcomes contributions that improve **safe, explainable, and reproducible** Active Directory lab assessment. The project is intentionally built for authorized, synthetic, or isolated lab environments. Contributions must preserve that boundary.
 
+## Start here
+
+The fastest high-value contributions make the case file clearer: improve an ATT&CK rationale, add a synthetic evidence fixture, tighten a remediation decision, correct accessible presentation, or document a safe reproduction step. Before starting a larger feature, open a feature request so maintainers can confirm the defensive use case and safety boundary.
+
+Use the repository’s [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or [feature request](.github/ISSUE_TEMPLATE/feature_request.md) template. For a security vulnerability in RedPath itself, follow the responsible-reporting guidance below instead of opening a public issue.
+
 ## Development workflow
 
 Fork the repository, create a focused branch, and keep each change small enough to review. The frontend is a zero-configuration Vite application; it should remain immediately explorable even when the Python API is unavailable.
@@ -39,6 +45,8 @@ Demo fixtures must remain synthetic. Do not submit customer data, credentials, p
 ## Pull requests
 
 Before opening a pull request, run the frontend checks shown above and update the README, screenshots, or scenario documentation when a user-visible behavior changes. Use a concise title in the form `feat:`, `fix:`, `docs:`, `test:`, or `chore:`. Reviewers will prioritize clarity, safety, determinism, and evidence-backed product behavior over feature volume.
+
+Every pull request should briefly state the defensive problem addressed, the validation performed, and any relevant safety or synthetic-data considerations. Keep unrelated changes out of the same pull request so the evidence trail is easy to review.
 
 ## Reporting issues responsibly
 
