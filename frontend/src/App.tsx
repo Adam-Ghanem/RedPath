@@ -53,7 +53,7 @@ export default function Home() {
   return (
     <div className="redpath-app">
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="RedPath home"><span className="brand-mark"><Network size={17} /></span><span>REDPATH</span><small>v0.1.0</small></a>
+        <a className="brand" href="#top" aria-label="RedPath home"><span className="brand-mark"><img className="brand-logo" src="/assets/redpath-logo-transparent.png" alt="" /></span><span>REDPATH</span><small>v0.1.0</small></a>
         <nav className="site-nav" aria-label="Primary navigation">
           <a href="#explore">Console</a><a href="#coverage">Coverage</a><a href="#findings">Findings</a><a href="#scenarios">Scenarios</a><a href="#github">GitHub</a>
         </nav>
