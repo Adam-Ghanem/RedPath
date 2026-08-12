@@ -88,16 +88,7 @@ The default dataset models six fictional assets, five evidence-backed findings, 
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A[Synthetic AD lab data] --> B[Exposure reasoning]
-    B --> C[Weighted attack-path graph]
-    B --> D[ATT&CK coverage map]
-    B --> E[Evidence-backed findings]
-    C --> F[Decision console]
-    D --> F
-    E --> F
-```
+![RedPath architecture: synthetic AD lab data flows through exposure reasoning into weighted attack paths, ATT&CK coverage, evidence-backed findings, and the decision console.](assets/redpath-architecture.png)
 
 The browser-first console uses pre-seeded TypeScript data to stay immediately explorable. The repository also includes a FastAPI backend for authorized lab workflows, audit-oriented services, and Docker Compose guidance; the live demo remains useful without those services.
 
@@ -128,7 +119,6 @@ Contributions are welcome when they preserve RedPath’s safe, explainable, and 
 - [ ] Add a concise, real browser walkthrough GIF for the live dashboard, coverage view, and PDF save flow.
 - [ ] Add evidence-detail deep links from each graph node.
 - [ ] Publish additional synthetic scenarios for identity, certificate, and lateral-movement coverage gaps.
-- [ ] Add a maintainer-enabled validation workflow after the repository app has the required Workflows permission.
 
 ## References
 
