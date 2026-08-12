@@ -1,4 +1,4 @@
-"""Render the source-controlled GitHub social-preview card for RedPath."""
+"""Render the GitHub social-preview card for RedPath."""
 
 from pathlib import Path
 from random import Random

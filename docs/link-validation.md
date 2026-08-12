@@ -20,4 +20,4 @@
 | External utility | `https://gif.ski/` |
 | ATT&CK references | `T1021.002`, `T1558.003`, `T1558.004`, and `T1649` official MITRE pages |
 
-The marked demo-video placeholder is intentionally not counted as a published asset link: it appears only as a literal destination in a fenced recording instruction and remains visibly marked as pending a real browser recording.
+The walkthrough GIF destination is not counted as a published asset link because it appears only as a literal destination in a fenced recording instruction.

@@ -1,6 +1,6 @@
 # Record the RedPath walkthrough
 
-This guide creates the real walkthrough referenced in the README. Do **not** replace it with an animated mockup or synthetic footage—the recording should show the public seeded demo as it actually behaves.
+This guide creates the product walkthrough referenced in the README. The recording should show the public seeded demo as it behaves in the browser.
 
 ## Target output
 
@@ -19,7 +19,7 @@ Create `assets/demo/redpath-walkthrough.gif` with a maximum file size of **10 MB
 1. Use **ScreenToGif** on Windows, **Kap** on macOS, or **OBS Studio** on any desktop platform. Record the three beats above with the browser zoom at 100%.
 2. Trim pauses and cursor travel. Keep only one deliberate interaction per beat so the visual story is readable with the GIF muted.
 3. Export as an MP4 first. Convert it to GIF with [Gifski](https://gif.ski/) using 12–15 fps and a 10 MB maximum, or use the export compressor built into your recorder.
-4. Place the final file at `assets/demo/redpath-walkthrough.gif`, then replace the README placeholder note with:
+4. Place the final file at `assets/demo/redpath-walkthrough.gif`, then add it to the README with:
 
    ```md
    ![RedPath walkthrough: attack path, coverage, and report workflow](assets/demo/redpath-walkthrough.gif)
@@ -31,4 +31,4 @@ Create `assets/demo/redpath-walkthrough.gif` with a maximum file size of **10 MB
 - [ ] The coverage view visibly shows a technique, verdict, or coverage gap.
 - [ ] The recording uses only RedPath’s synthetic seeded data.
 - [ ] The final file is under 10 MB and loops cleanly.
-- [ ] The browser print dialog is shown only as a PDF-save workflow, not as a fabricated report-generation claim.
+- [ ] The browser print dialog is shown only as a PDF-save workflow.

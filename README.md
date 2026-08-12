@@ -34,7 +34,7 @@ RedPath turns a synthetic Active Directory trust map into a visual case file: we
 
 ![RedPath live dashboard with attack path graph](screenshots/redpath-hero.webp)
 
-> **Demo video placeholder — intentionally not a fake recording.** A short walkthrough will show the attack-path graph, detection-coverage view, and report workflow. Until it is recorded, follow the reproducible free-tool instructions in [`docs/record-demo.md`](docs/record-demo.md) to create `assets/demo/redpath-walkthrough.gif` (under 10 MB) from the live demo.
+> **Product walkthrough:** A concise tour of the attack-path graph, detection-coverage view, and report workflow is planned for this section. Maintainers can follow the free recording guide in [`docs/record-demo.md`](docs/record-demo.md) to add `assets/demo/redpath-walkthrough.gif` (under 10 MB) from the live demo.
 
 | In less than one minute | What the viewer sees |
 | --- | --- |
