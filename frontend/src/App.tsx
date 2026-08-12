@@ -55,9 +55,9 @@ export default function Home() {
       <header className="site-header">
         <a className="brand" href="#top" aria-label="RedPath home"><span className="brand-mark"><img className="brand-logo" src="/assets/redpath-logo-transparent.png" alt="" /></span><span>REDPATH</span><small>v0.1.0</small></a>
         <nav className="site-nav" aria-label="Primary navigation">
-          <a href="#explore">Console</a><a href="#coverage">Coverage</a><a href="#findings">Findings</a><a href="#scenarios">Scenarios</a><a href="#github">GitHub</a>
+          <a href="#findings">Evidence</a><a href="#explore">Path analysis</a><a href="#scenarios">Remediation</a>
         </nav>
-        <a className="header-cta" href="#explore">Explore lab <ArrowDownRight size={15} /></a>
+        <a className="header-cta" href="#explore">Case RP-101</a>
       </header>
 
       <main id="top">
@@ -65,9 +65,10 @@ export default function Home() {
           <div className="case-index-rail" aria-hidden="true"><span>01</span><span>02</span><span>03</span><span>04</span></div>
           <div className="hero-copy">
             <div className="eyebrow"><span className="pulse-dot" /> Case RP-101 · Cyber risk briefing</div>
-            <h1>Every path<br />leaves <em>evidence.</em></h1>
+            <h1>Every path<br />leaves <em>evidence</em></h1>
             <p className="hero-lede">RedPath maps synthetic Active Directory trust paths, exposes critical risk, and turns technical evidence into a precise remediation decision.</p>
-            <div className="case-file-badge"><div><span>CASE ID</span><strong>RP-101</strong></div><div><span>STATUS</span><b>ACTIVE</b></div></div>
+            <div className="case-file-badge"><div><span>CASE ID</span><strong>RP-101</strong></div><div><span>STATUS</span><b>ACTIVE</b></div><div className="case-opened"><span>OPENED</span><b>14 MAY 2025 · 09:42 UTC</b></div></div>
+            <div className="case-stamp-row"><div className="forensic-seal"><img src="/assets/redpath-logo-transparent.png" alt="" /><span>REDPATH FORENSIC INTELLIGENCE</span></div><div className="risk-stamp">HIGH<br />RISK<small>CRITICAL PATH</small></div></div>
             <div className="hero-actions"><a className="button primary" href="#explore"><Crosshair size={16} /> Open interactive lab</a><a className="button secondary" href="#github"><GitPullRequest size={16} /> View repository assets</a></div>
             <div className="hero-proof"><span><CheckCircle2 size={15} /> 100% synthetic lab data</span><span><CheckCircle2 size={15} /> zero configuration</span><span><CheckCircle2 size={15} /> safe dry-run only</span></div>
           </div>
@@ -89,7 +90,7 @@ export default function Home() {
           </aside>
         </section>
 
-        <section className="trust-strip"><span>Built for clear security conversations</span><div><span><Network size={16} /> Attack path reasoning</span><span><Radar size={16} /> Purple-team evidence</span><span><ShieldCheck size={16} /> Safe demonstration mode</span><span><FileCode2 size={16} /> GitHub-ready from day one</span></div></section>
+        <section className="forensic-ledger" aria-label="Case investigation metadata"><div><span>THREAT LEVEL</span><b>CRITICAL</b></div><div><span>PRIMARY IMPACT</span><b>DATA EXPOSURE</b></div><div><span>CONFIDENCE</span><b>HIGH</b></div><div><span>PATH COST</span><b>8.2 / 10</b></div><div><span>ANALYST</span><b>REDPATH LABS</b></div><div><span>NEXT REVIEW</span><b>21 MAY 2025</b></div></section>
 
         <section className="features section-shell" id="product">
           <div className="section-heading"><div><span className="section-index">01 / PRODUCT SURFACE</span><h2>A security project that <em>explains itself</em> in one screen.</h2></div><p>Every surface connects a finding to a path, a technique, the supporting evidence, and a defensible next action.</p></div>
