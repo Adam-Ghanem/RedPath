@@ -1,0 +1,15 @@
+[
+  {
+    "id": "lab-alert-001",
+    "timestamp": "2026-08-12T02:00:00Z",
+    "rule": {
+      "id": "100501",
+      "description": "T1558.003 Kerberoasting signal: unusual service ticket request"
+    },
+    "data": {
+      "event_id": "4769",
+      "srcuser": "analyst01",
+      "dstuser": "svc_sql"
+    }
+  }
+]

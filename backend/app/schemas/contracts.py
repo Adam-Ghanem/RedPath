@@ -101,6 +101,21 @@ class CoverageObservation(BaseModel):
     recommendation: str = ""
 
 
+class CorrelationRequest(BaseModel):
+    findings: list[FindingInput] = Field(default_factory=list)
+    graph: GraphResult | None = None
+
+
+class CorrelatedRisk(BaseModel):
+    finding_title: str
+    technique_id: str | None = None
+    asset_id: str | None = None
+    risk_score: float = Field(ge=0, le=100)
+    path_relevance: float = Field(ge=0, le=1)
+    related_techniques: list[str] = Field(default_factory=list)
+    rationale: str
+
+
 class WazuhAlert(BaseModel):
     model_config = ConfigDict(extra="allow")
 

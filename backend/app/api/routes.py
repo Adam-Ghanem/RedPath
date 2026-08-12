@@ -11,6 +11,8 @@ from app.core.config import Settings
 from app.core.scope import ScopePolicy, ScopeViolation
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
+    CorrelatedRisk,
+    CorrelationRequest,
     DetectionGapReport,
     FindingInput,
     GraphRequest,
@@ -20,6 +22,7 @@ from app.schemas.contracts import (
     ReconResult,
 )
 from app.services.ad_detection import detect_ad_findings
+from app.services.correlation import correlate_findings
 from app.services.graph_engine import analyze_attack_graph
 from app.services.mitre import all_techniques
 from app.services.purple import build_detection_gap_report
@@ -75,6 +78,12 @@ def build_router(settings: Settings) -> APIRouter:
         findings = detect_ad_findings(observations)
         audit.record("ad.detection_analysis", {"observation_count": len(observations), "finding_count": len(findings)})
         return findings
+
+    @router.post("/risk/correlate", response_model=list[CorrelatedRisk])
+    def risk_correlate(request: CorrelationRequest) -> list[CorrelatedRisk]:
+        results = correlate_findings(request.findings, request.graph)
+        audit.record("risk.correlated", {"finding_count": len(request.findings), "result_count": len(results)})
+        return results
 
     @router.post("/graph/analyze", response_model=GraphResult)
     def graph_analyze(request: GraphRequest) -> GraphResult:

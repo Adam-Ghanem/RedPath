@@ -1,0 +1,19 @@
+[
+  {
+    "asset_id": "DC-01",
+    "hostname": "dc01.lab.local",
+    "service_principal_name": "MSSQLSvc/db01.lab.local:1433"
+  },
+  {
+    "asset_id": "USER-07",
+    "hostname": "user07.lab.local",
+    "preauth_disabled": true
+  },
+  {
+    "asset_id": "CA-01",
+    "hostname": "ca01.lab.local",
+    "adcs_template": "Lab-User-Auth",
+    "enrollee_supplies_subject": true,
+    "client_auth_eku": true
+  }
+]
