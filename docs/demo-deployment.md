@@ -26,10 +26,4 @@ For a public portfolio or trial deployment, deploy **only** the static `frontend
 | Render | Create a new Web Service from this repository, select **Docker**, set the Dockerfile path to `frontend/Dockerfile.demo`, and set the service port to `80`. |
 | Fly.io | Run `fly launch --dockerfile frontend/Dockerfile.demo` from the repository root, then set the generated service `internal_port` to `80` before deployment. |
 
-The production Vercel project is already Git-connected to `main` with `frontend/` as its root directory. Each successful push to `main` automatically creates the live-demo deployment at [redpath-sec.vercel.app](https://redpath-sec.vercel.app); no duplicate deployment workflow is required for that connected project.
-
-## Optional GitHub Actions deployment template
-
-The repository includes [`docs/github-actions/deploy-vercel.yml`](github-actions/deploy-vercel.yml) as a template for teams that deliberately prefer GitHub Actions-managed Vercel deploys. It is stored outside `.github/workflows/` because a maintainer must authorize workflow-file changes and add the required Vercel secrets. Do not activate it alongside the existing Git-connected Vercel deployment unless the latter is disconnected; running both can produce redundant deployments.
-
-To activate the template, copy it to `.github/workflows/deploy-vercel.yml` with an authorized maintainer account and add `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` as repository secrets.
+The production Vercel project is already Git-connected to `main` with `frontend/` as its root directory. Each successful push to `main` automatically creates the live-demo deployment at [redpath-sec.vercel.app](https://redpath-sec.vercel.app). This single Git-connected path avoids duplicate deployments, secret management in GitHub Actions, and an extra workflow-maintenance surface.
