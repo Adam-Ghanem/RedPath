@@ -1,177 +1,128 @@
-![RedPath logo](frontend/public/assets/redpath-logo.png)
-
 # RedPath
 
-## Advanced Internal Pentest & Attack Path Simulator
+> **See the path. Prove the gap.**
 
-RedPath is a **safe-by-design internal Active Directory lab assessment platform** that connects offensive discovery, attack-path reasoning, and defensive validation in one workflow. It is designed as a cybersecurity portfolio project for demonstrating Python/FastAPI engineering, React dashboard development, MITRE ATT&CK mapping, graph analytics, vulnerability correlation, and SOC detection-gap analysis.
+[![Validate RedPath](https://github.com/Adam-Ghanem/RedPath/actions/workflows/validate.yml/badge.svg)](https://github.com/Adam-Ghanem/RedPath/actions/workflows/validate.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-72e0a5.svg)](LICENSE) [![Synthetic demo](https://img.shields.io/badge/demo-synthetic%20data-66e3a5.svg)](#demo-mode) [![Safe lab only](https://img.shields.io/badge/scope-authorized%20labs%20only-f2b974.svg)](#safety-and-scope)
 
-> **Scope statement:** RedPath is for authorized, isolated lab environments only. It defaults to dry-run, enforces an IP/CIDR allow-list, avoids arbitrary shell text, does not store credentials, and analyzes supplied AD observations rather than implementing credential-theft or exploitation workflows.
+**RedPath** is an interactive, safe-by-design security product demo for understanding synthetic Active Directory exposure paths and validating whether defensive telemetry covers the behaviors that matter. It connects asset observations, weighted trust edges, MITRE ATT&CK techniques, finding evidence, and remediation guidance in one explainable console.
 
-## Why this project is credible
+The repository starts in **demo mode** with fully synthetic data. No credentials, directory connection, agent, API key, or backend configuration is required to explore the attack-path graph, coverage dashboard, finding dossier, and four safe scenario playbooks.
 
-A conventional scanner can produce a list of services. RedPath asks a more useful question: **which observed weaknesses form a plausible path to a high-value privilege, which node is the chokepoint, and did the SIEM detect the technique?** The platform returns explainable evidence rather than a black-box risk number. Every finding includes an asset, a severity, optional CVSS score and vector, MITRE technique mapping, evidence, and remediation guidance.
+## What the product demonstrates
 
-The purple-team loop is intentionally repeatable. A lab run produces expected techniques, imported Wazuh-style evidence, coverage percentage, missing detections, and recommendations for rule tuning. The Wazuh integration is read-only, while report generation turns the same evidence into a PDF suitable for a review or interview demonstration.
+| Surface | What visitors can inspect immediately |
+| --- | --- |
+| **Attack-path explorer** | A weighted synthetic Active Directory trust graph, selectable shortest paths, and highlighted chokepoints. |
+| **Detection coverage** | Expected behaviors mapped to ATT&CK techniques, purple-team evidence, coverage by tactic, and clear gap verdicts. |
+| **Findings explorer** | Every asset finding with severity, CVSS score, MITRE technique, supporting evidence, and a concrete remediation action. |
+| **Safe scenario library** | Four individual evidence-led playbooks, each with expected techniques, an explicit dry-run recon plan, and an evidence-backed risk summary. |
+| **Demo-first delivery** | A client-side seeded lab that remains useful even when no backend service is available. |
+
+## Screenshots
+
+### Landing overview
+
+![RedPath landing overview](screenshots/redpath-hero.webp)
+
+### Interactive attack-path console
+
+![RedPath interactive topology console](screenshots/redpath-console.webp)
+
+See [the screenshot guide](docs/screenshots.md) for the verified views and data-handling note.
+
+## Quick start
+
+### Option A: Demo console only
+
+The frontend is self-contained. It is the quickest way to explore the seeded lab.
+
+```bash
+git clone https://github.com/Adam-Ghanem/RedPath.git
+cd RedPath/frontend
+pnpm install
+pnpm dev
+```
+
+Open [http://localhost:5173](http://localhost:5173). The console renders the synthetic lab immediately; it does not request a directory connection or execute commands.
+
+### Option B: Full local stack
+
+Docker Compose starts the existing backend alongside the frontend for users who want to inspect the API contracts as well.
+
+```bash
+git clone https://github.com/Adam-Ghanem/RedPath.git
+cd RedPath
+docker compose up --build
+```
+
+The frontend is available at [http://localhost:5173](http://localhost:5173), and the API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+## Interactive demo mode
+
+The default dataset models six imaginary assets, five evidence-backed findings, three weighted paths, four ATT&CK tactic coverage summaries, and four scenario playbooks. The graph uses path cost to expose the lowest-cost relationship chain toward a privileged objective rather than asserting that the path has been executed.
+
+| Synthetic scenario | Expected techniques | Coverage verdict |
+| --- | --- | --- |
+| Service identity exposure | `T1558.003`, `T1021.002` | Coverage gap |
+| Pre-authentication drift | `T1558.004`, `T1098` | Partially covered |
+| Certificate template escape | `T1649`, `T1098` | Coverage gap |
+| File services blast radius | `T1021.002`, `T1098` | Validated |
+
+The technique identifiers are linked to official ATT&CK entries and are presented as safe lab behaviors, not as instructions to compromise systems. [1] [2] [3] [4]
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    UI[React + Tailwind console] --> API[FastAPI API]
-    API --> SCOPE[CIDR scope policy]
-    API --> AUDIT[Chained JSONL audit log]
-    API --> RECON[Safe recon planner]
-    API --> AD[AD observation analyzers]
-    API --> GRAPH[NetworkX graph engine]
-    API --> PURPLE[Purple-team comparator]
-    API --> REPORT[PDF report generator]
-    PURPLE -. read-only .-> WAZUH[Wazuh indexer]
-    RECON --> DB[(SQLite / PostgreSQL schema)]
-    AD --> DB
-    GRAPH --> DB
-    PURPLE --> DB
-    REPORT --> DB
+    A[Synthetic AD lab data] --> B[Exposure reasoning]
+    B --> C[Weighted attack-path graph]
+    B --> D[ATT&CK coverage map]
+    B --> E[Evidence-backed findings]
+    C --> F[Decision console]
+    D --> F
+    E --> F
 ```
 
-The backend is organized around narrow, testable services. The recon module validates target scope and produces safe `argv` arrays for `nmap`, `enum4linux`, and `smbclient`. Dry-run returns those arrays without execution; non-dry-run remains unavailable while `DRY_RUN=true`. The AD analyzer consumes lab-exported observations, and the graph engine uses Dijkstra for weighted shortest paths plus betweenness centrality for chokepoints. The React console presents posture, assets, findings, graph paths, and detection coverage in a dark cyber interface.
-
-## Capabilities delivered
-
-| Capability | Implementation |
-| --- | --- |
-| Scoped recon | FastAPI endpoint, CIDR allow-list, `nmap` service inventory, optional SMB inventory, timeout controls |
-| AD technique analysis | Observation-based checks for Kerberoasting, AS-REP Roasting, and authentication-certificate risk |
-| MITRE ATT&CK | Registry for `T1558.003`, `T1558.004`, and `T1649`, including detection hints and remediation |
-| Attack paths | NetworkX directed graph, Dijkstra shortest path, betweenness-centrality chokepoints |
-| CVSS | Score and vector fields in finding contracts and database schema |
-| Purple team | Imported Wazuh-style alert comparison and detection-gap recommendations |
-| Scenario library | Four safe playbooks, persisted assessment history, evidence-backed risk, and dry-run execution |
-| Expert operations | Campaigns, evidence provenance, remediation ownership, risk trends, and detection-tuning queue |
-| Enterprise controls | Audit-chain verification, evidence manifests, remediation SLA posture, and deterministic campaign exports |
-| Governance grade | Risk acceptance with expiry, evidence review states, remediation lifecycle, control scorecards, and executive KPIs |
-| Reporting | FPDF2 report with executive summary, findings, MITRE mappings, gaps, and remediation |
-| Safety | Dry-run default, strict scope, no arbitrary shell, append-only chained audit log, no credential persistence |
-| Delivery | Docker Compose, React/Vite frontend, Pytest/Ruff/Bandit/Semgrep CI configuration |
-
-## Quickstart
-
-The fastest portfolio demo uses Docker Compose. Copy `.env.example` to `.env`, keep `DRY_RUN=true`, and set only the private lab ranges you own.
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-Open the dashboard at [http://localhost:5173](http://localhost:5173) and the interactive API documentation at [http://localhost:8000/docs](http://localhost:8000/docs). If the API is not running, the dashboard remains in demo mode with seeded graph and coverage data; the UI never executes a command by itself.
-
-The dry-run recon contract can be exercised directly:
-
-```bash
-curl -s http://localhost:8000/api/v1/recon \
-  -H 'Content-Type: application/json' \
-  -d '{"targets":["192.168.56.10"],"profile":"service_inventory","dry_run":true}'
-```
-
-The AD observation analyzer can be demonstrated with synthetic lab data:
-
-```bash
-curl -s http://localhost:8000/api/v1/detections/ad \
-  -H 'Content-Type: application/json' \
-  -d '[
-    {"asset_id":"DC-01","service_principal_name":"MSSQLSvc/db01.lab.local:1433"},
-    {"asset_id":"USER-07","preauth_disabled":true},
-    {"asset_id":"CA-01","enrollee_supplies_subject":true,"client_auth_eku":true}
-  ]'
-```
-
-The graph endpoint accepts explicit nodes and edges and returns the weighted shortest path plus chokepoints. The purple endpoint accepts expected technique IDs and imported alerts, so a reviewer can show a coverage gap without running an attack.
+The frontend uses pre-seeded TypeScript data to make the demo immediately explorable. The repository also contains a FastAPI backend for safe lab workflows, audit-oriented domain services, and a Docker Compose configuration. The user-facing console does not depend on a backend for its default demo experience.
 
 ## Repository structure
 
 ```text
 RedPath/
-├── backend/
-│   ├── app/
-│   │   ├── api/routes.py              # Versioned FastAPI endpoints
-│   │   ├── core/                      # Settings, scope, chained audit log
-│   │   ├── db/models.py               # SQLAlchemy schema
-│   │   ├── schemas/contracts.py       # Typed API contracts
-│   │   ├── services/
-│   │   │   ├── recon.py               # Safe command planner/runner
-│   │   │   ├── ad_detection.py        # Observation-based AD checks
-│   │   │   ├── mitre.py               # ATT&CK registry
-│   │   │   ├── graph_engine.py        # Dijkstra + centrality
-│   │   │   ├── purple.py               # Wazuh-style coverage comparator
-│   │   │   ├── wazuh.py                # Read-only indexer adapter
-│   │   │   ├── report.py               # PDF export
-│   │   │   ├── scenarios.py            # Curated safe playbooks
-│   │   │   └── scenario_runner.py      # Evidence-to-run persistence
-│   │   └── main.py                    # FastAPI application
-│   ├── tests/test_core.py             # Core safety and analytics tests
-│   ├── Dockerfile
-│   └── requirements.txt
-├── frontend/
-│   ├── src/App.tsx                    # Dashboard shell
-│   ├── src/components/AttackPathGraph.tsx
-│   ├── src/components/ScenarioPanel.tsx # Scenario execution + run history
-│   ├── src/data/mock.ts               # Safe demo dataset
-│   ├── src/index.css                  # Dark cyber visual system
-│   ├── Dockerfile
-│   └── package.json
-├── docs/
-│   ├── architecture.md
-│   ├── api.md
-│   ├── database.md
-│   ├── lab-setup.md
-│   ├── roadmap.md
-│   ├── scenarios.md
-│   ├── v2-architecture.md
-│   ├── enterprise-controls.md
-│   ├── governance-model.md
-├── lab/fixtures/                    # Synthetic AD, Wazuh, and scenario evidence
-├── docker-compose.yml
-├── pyproject.toml
-└── README.md
+├── frontend/                 # Vite + React synthetic-data product console
+│   └── src/data/             # Typed demo model and contract tests
+├── backend/                  # FastAPI services for authorized lab workflows
+├── docs/                     # Architecture, scenarios, validation, screenshot notes
+├── screenshots/              # README product captures
+├── CONTRIBUTING.md           # Safe contribution workflow
+└── docker-compose.yml        # Optional full local stack
 ```
 
-## Development checks
+## Validation
 
-For the backend, install `backend/requirements.txt`, set `PYTHONPATH=backend`, and run the unit tests and static checks.
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r backend/requirements.txt
-PYTHONPATH=backend pytest
-ruff check backend
-bandit -r backend/app -ll
-```
-
-For the frontend, install dependencies and build the production bundle.
+The frontend test suite verifies that all paths are weighted and explorable, that the overall detection score is derived from tactic-level evidence, and that every scenario retains required safety and detail fields. Run the checks locally with:
 
 ```bash
 cd frontend
-npm install
-npm run lint
-npm run build
+pnpm test
+pnpm run build
 ```
 
-The CI definition runs the same categories of checks and includes Semgrep as a policy gate. It is available at [ci/redpath-ci.yml](ci/redpath-ci.yml), while [docs/ci-setup.md](docs/ci-setup.md) explains how an authorized repository maintainer can activate it under `.github/workflows/`. In an interview, the important discussion is not only that the checks pass, but what they protect: shell-injection resistance, scope enforcement, dependency hygiene, typed contracts, and regression coverage for the analytics layer.
+The repository includes a ready-to-enable [GitHub Actions validation template](docs/github-actions/validate.yml) for the frontend checks and backend suite. A maintainer can copy it into `.github/workflows/validate.yml` after enabling the GitHub App’s **Workflows** permission.
 
-## Lab guide
+## Safety and scope
 
-Read [docs/lab-setup.md](docs/lab-setup.md) before connecting any lab system. It describes a host-only 2–3 VM Active Directory topology, synthetic identities, observation fixtures, Wazuh agent/indexer integration, read-only alert querying, and stop conditions. The official Wazuh documentation shows that alerts are indexed under `wazuh-alerts*` and can be queried through the indexer `_search` endpoint [3]. MITRE's official entries identify Kerberoasting as `T1558.003` and AS-REP Roasting as `T1558.004` [1] [2]. FIRST's CVSS v3.1 specification defines Base, Temporal, and Environmental metric groups and requires the vector to be presented with the score [4].
+RedPath is a **defensive, lab-oriented project**. It must only be used against systems that you own or are explicitly authorized to assess. Demo mode uses fabricated hosts, identities, findings, paths, and evidence. It does not store credentials, connect to a directory, or execute network commands.
 
-## Roadmap
+> The scenario plans are dry-run display artifacts for safe learning and defensive validation. They are not operational runbooks and should not be applied to production systems.
 
-The staged plan is in [docs/roadmap.md](docs/roadmap.md). The expanded scenario workflow is documented in [docs/scenarios.md](docs/scenarios.md), the expert-level domain model is in [docs/v2-architecture.md](docs/v2-architecture.md), enterprise controls are specified in [docs/enterprise-controls.md](docs/enterprise-controls.md), and governance policy is defined in [docs/governance-model.md](docs/governance-model.md). The clean onboarding evidence is recorded in [docs/validation.md](docs/validation.md), including dependency audit, 14-test backend validation, frontend production build, and Docker Compose service health.
-MVP is the safe evidence-to-graph loop.
-v1 adds a read-only Wazuh indexer workflow, report regression fixtures, and richer detection engineering. v2 adds the plugin SDK, graph snapshots, environmental risk modifiers, and signed run artifacts.
+## Contributing
+
+The project values precise documentation, explainable reasoning, deterministic test coverage, and safety-by-default product behavior. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
 
 ## References
 
 [1]: https://attack.mitre.org/techniques/T1558/003/ "MITRE ATT&CK: Kerberoasting"
 [2]: https://attack.mitre.org/techniques/T1558/004/ "MITRE ATT&CK: AS-REP Roasting"
-[3]: https://documentation.wazuh.com/current/user-manual/indexer-api/use-case.html "Wazuh Indexer API use cases"
-[4]: https://www.first.org/cvss/v3.1/specification-document "FIRST CVSS v3.1 specification"
+[3]: https://attack.mitre.org/techniques/T1649/ "MITRE ATT&CK: Steal or Forge Authentication Certificates"
+[4]: https://attack.mitre.org/techniques/T1021/002/ "MITRE ATT&CK: SMB/Windows Admin Shares"

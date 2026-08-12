@@ -7,14 +7,16 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "lint": "tsc --noEmit",
+    "test": "vitest run",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "@types/react": "latest",
     "@tailwindcss/postcss": "latest",
+    "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
     "autoprefixer": "latest",
+    "lucide-react": "^1.31.0",
     "postcss": "latest",
     "react": "latest",
     "react-dom": "latest",
@@ -22,5 +24,7 @@
     "typescript": "latest",
     "vite": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
 }

@@ -1,58 +1,99 @@
-import { useMemo, useState } from "react";
-import type { GraphEdge, GraphNode } from "../data/mock";
+import { ChevronRight, GitBranch, Network, ShieldAlert, Target } from "lucide-react";
+import { attackPaths, graphEdges, graphNodes, pathById, type Severity } from "../data/redpathDemo";
 
-type Props = {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
+const severityColor: Record<Severity, string> = {
+  Critical: "#ff6d7a",
+  High: "#ffbd62",
+  Medium: "#e8d26e",
+  Low: "#66e3a5",
 };
 
-export default function AttackPathGraph({ nodes, edges }: Props) {
-  const [selected, setSelected] = useState(nodes[0]?.id ?? "");
-  const byId = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
-  const selectedNode = byId.get(selected);
+type AttackPathGraphProps = {
+  selectedPathId: string;
+  selectedAssetId: string;
+  onSelectPath: (pathId: string) => void;
+  onSelectAsset: (assetId: string) => void;
+};
+
+export default function AttackPathGraph({ selectedPathId, selectedAssetId, onSelectPath, onSelectAsset }: AttackPathGraphProps) {
+  const activePath = pathById(selectedPathId);
+  const activeEdges = new Set(activePath.edgeIds);
+  const activeNodes = new Set(activePath.nodeIds);
 
   return (
     <div className="graph-shell">
-      <svg viewBox="0 0 760 340" role="img" aria-label="Interactive attack path graph" className="attack-graph">
-        <defs>
-          <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-            <path d="M0,0 L8,4 L0,8 Z" fill="#49d7e8" />
-          </marker>
-          <filter id="softGlow"><feGaussianBlur stdDeviation="4" result="coloredBlur" /><feMerge><feMergeNode in="coloredBlur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-        </defs>
-        <g className="edge-layer">
-          {edges.map((edge) => {
-            const source = byId.get(edge.source)!;
-            const target = byId.get(edge.target)!;
-            const highlighted = selected === edge.source || selected === edge.target;
-            return (
-              <g key={`${edge.source}-${edge.target}`} className={highlighted ? "edge-group active" : "edge-group"}>
-                <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} markerEnd="url(#arrow)" />
-                <text x={(source.x + target.x) / 2} y={(source.y + target.y) / 2 - 9}>{edge.technique}</text>
-              </g>
-            );
-          })}
-        </g>
-        <g className="node-layer">
-          {nodes.map((node) => {
-            const active = node.id === selected;
-            return (
-              <g key={node.id} className={`graph-node ${node.status} ${active ? "selected" : ""}`} onClick={() => setSelected(node.id)} tabIndex={0} role="button" aria-label={`Select ${node.label}`}>
-                <circle cx={node.x} cy={node.y} r={active ? 31 : 27} filter={active ? "url(#softGlow)" : undefined} />
-                <text x={node.x} y={node.y + 4} textAnchor="middle">{node.label}</text>
-                <text className="node-kind" x={node.x} y={node.y + 48} textAnchor="middle">{node.kind}</text>
-              </g>
-            );
-          })}
-        </g>
-      </svg>
-      <div className="graph-detail">
-        <div>
-          <span className="eyebrow">Selected node</span>
-          <strong>{selectedNode?.label ?? "—"}</strong>
+      <div className="graph-canvas" aria-label="Interactive synthetic Active Directory attack path graph">
+        <div className="graph-topline">
+          <div className="eyebrow"><Network size={14} /> Synthetic lab topology</div>
+          <div className="graph-legend" aria-label="Graph legend">
+            <span><i className="legend-dot critical" /> Critical path</span>
+            <span><i className="legend-dot chokepoint" /> Chokepoint</span>
+            <span><i className="legend-line" /> Weighted trust edge</span>
+          </div>
         </div>
-        <div className="detail-chip">{selectedNode?.status ?? "unknown"}</div>
+        <svg viewBox="0 0 100 100" role="img" aria-labelledby="graph-title graph-description" preserveAspectRatio="xMidYMid meet">
+          <title id="graph-title">RedPath synthetic Active Directory attack path graph</title>
+          <desc id="graph-description">Select nodes and paths to inspect weighted relationships and chokepoints.</desc>
+          <defs>
+            <filter id="nodeGlow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="1.5" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          {graphEdges.map((edge) => {
+            const source = graphNodes.find((node) => node.id === edge.source)!;
+            const target = graphNodes.find((node) => node.id === edge.target)!;
+            const isActive = activeEdges.has(edge.id);
+            return (
+              <g className="graph-edge-group" key={edge.id}>
+                <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={isActive ? "graph-edge active" : "graph-edge"} />
+                <text x={(source.x + target.x) / 2} y={(source.y + target.y) / 2 - 2} className={isActive ? "edge-label active" : "edge-label"}>{edge.weight}</text>
+              </g>
+            );
+          })}
+          {graphNodes.map((node) => {
+            const isActive = activeNodes.has(node.id);
+            const isSelected = selectedAssetId === node.id;
+            const isChokepoint = node.status === "chokepoint";
+            return (
+              <g
+                className={`graph-node ${isActive ? "active" : ""} ${isSelected ? "selected" : ""} ${isChokepoint ? "is-chokepoint" : ""}`}
+                key={node.id}
+                onClick={() => onSelectAsset(node.id)}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelectAsset(node.id); }}
+                role="button"
+                tabIndex={0}
+                aria-label={`${node.label}: ${node.subtitle}, ${node.severity} severity`}
+              >
+                <circle cx={node.x} cy={node.y} r={isSelected ? 5.4 : 4.3} className="node-ring" />
+                <circle cx={node.x} cy={node.y} r={2.8} fill={severityColor[node.severity]} filter={isActive || isChokepoint ? "url(#nodeGlow)" : undefined} />
+                <text x={node.x} y={node.y + 8} className="node-label">{node.label}</text>
+                <text x={node.x} y={node.y + 11.6} className="node-subtitle">{node.subtitle}</text>
+              </g>
+            );
+          })}
+        </svg>
+        <div className="graph-note"><ShieldAlert size={15} /> All paths are calculated from pre-seeded, synthetic lab observations. Nothing runs against a network.</div>
       </div>
+      <aside className="path-inspector">
+        <div className="inspector-heading"><span>Path explorer</span><GitBranch size={16} /></div>
+        <div className="path-list">
+          {attackPaths.map((path) => (
+            <button className={`path-option ${path.id === selectedPathId ? "active" : ""}`} key={path.id} onClick={() => onSelectPath(path.id)}>
+              <span className={`severity-square ${path.risk.toLowerCase()}`} />
+              <span className="path-option-copy"><strong>{path.name}</strong><small>{path.cost} weighted hops · {path.risk}</small></span>
+              <ChevronRight size={15} />
+            </button>
+          ))}
+        </div>
+        <div className="active-path-detail">
+          <div className="detail-kicker"><Target size={14} /> Current shortest path</div>
+          <h3>{activePath.name}</h3>
+          <p>{activePath.summary}</p>
+          <div className="detail-stat"><span>Chokepoint</span><strong>{activePath.chokepoint}</strong></div>
+          <div className="path-route">{activePath.nodeIds.map((nodeId, index) => <span key={nodeId}>{index > 0 && <ChevronRight size={12} />} {nodeId}</span>)}</div>
+        </div>
+      </aside>
     </div>
   );
 }
