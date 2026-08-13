@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import {
   Activity,
   ArrowLeft,
@@ -23,6 +23,8 @@ import type { AuthMeResponse, ConsoleApi, SnapshotLoadState } from "./contracts"
 import { buildAnalystConsoleModel, formatUtc } from "./model";
 
 import "./analyst-console.css";
+
+const AnalystDrilldown = lazy(() => import("./AnalystDrilldown"));
 
 type ConsolePanel = "priorities" | "detection" | "evidence";
 
@@ -217,6 +219,10 @@ export function AnalystConsole({ api = consoleApi, onExit = () => { window.locat
         <article className="soc-panel"><div className="soc-panel__head"><div><span className="soc-card-label">RECENT VALIDATION</span><h2>Assessment runs</h2></div><Database size={19} /></div>{model.recentRuns.length ? <div className="soc-run-list">{model.recentRuns.slice(0, 4).map((run) => <article key={run.run_id}><div><strong>{run.scenario_id}</strong><small>{run.summary}</small></div><div><span className={run.dry_run ? "soc-run-state" : "soc-run-state soc-run-state--live"}>{run.dry_run ? "DRY RUN" : "REVIEW"}</span><small>{formatUtc(run.created_at)}</small></div><b>{run.coverage_percent}%</b></article>)}</div> : <EmptyQueue title="No validation runs yet" detail="Authorised dry-run assessments will appear here when the backend records them." />}</article>
         <article className="soc-panel" id="controls"><div className="soc-panel__head"><div><span className="soc-card-label">CONTROL ASSURANCE</span><h2>Evidence and audit</h2></div><FileSearch size={19} /></div><div className="soc-control-list"><div><span>Audit chain</span><b className={model.evidence.integrityValid ? "healthy" : "attention"}>{model.evidence.integrityValid ? "Verified" : "Review required"}</b></div><div><span>Recorded audit events</span><b>{model.evidence.auditEvents}</b></div><div><span>Accepted evidence</span><b>{model.evidence.reviewed} / {state.snapshot.evidence.length}</b></div><div><span>Default operation mode</span><b>{model.safety.dryRunDefault ? "Dry-run" : "Policy controlled"}</b></div></div></article>
       </section>
+
+      <Suspense fallback={<section className="soc-drilldown" role="status" aria-live="polite"><div className="soc-drilldown-loading"><Radar size={18} /><span>Loading analyst detail views…</span></div></section>}>
+        <AnalystDrilldown api={api} session={session} initialEvidence={state.snapshot.evidence} initialPcapAnalyses={state.snapshot.pcapAnalyses} />
+      </Suspense>
     </main>
   </div>;
 }

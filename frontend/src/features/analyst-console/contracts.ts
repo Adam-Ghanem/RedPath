@@ -76,6 +76,115 @@ export type PcapEvidenceView = {
   analysis: Record<string, unknown>;
 };
 
+export type AssetProvenance = {
+  source: string;
+  scan_id: string;
+  job_id: string;
+  actor: string;
+  observed_at: string;
+  dry_run: boolean;
+  observation_hash: string;
+};
+
+export type InventoryAsset = {
+  schema_version: "1.0" | string;
+  asset: Record<string, unknown>;
+  asset_id: string;
+  tenant_id: string;
+  display_name: string;
+  asset_type: "host" | string;
+  ip: string;
+  hostname?: string | null;
+  ports: number[];
+  services: string[];
+  scan_id: string;
+  source: string;
+  discovered_at: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  provenance: AssetProvenance;
+};
+
+export type DetectionCondition = {
+  path: string;
+  operator: "equals" | "contains" | "starts_with" | "in" | string;
+  value: unknown;
+};
+
+export type DetectionRule = {
+  rule_id: string;
+  version: number;
+  title: string;
+  description: string;
+  technique_ids: string[];
+  severity: ConsoleSeverity;
+  event_sources: string[];
+  conditions: DetectionCondition[];
+  match_mode: "all" | "any" | string;
+  window_seconds: number;
+  group_by: string[];
+  enabled: boolean;
+  false_positive_sla_percent: number;
+  deployment_status: "draft" | "testing" | "production" | string;
+  requires_approval: boolean;
+};
+
+export type CampaignResponse = {
+  name: string;
+  objective: string;
+  scope_snapshot: string[];
+  tenant_id: string;
+  owner: string;
+  campaign_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GovernanceHistoryEvent = {
+  event_id: string;
+  tenant_id: string;
+  case_id: string;
+  event_type: string;
+  actor: string;
+  summary: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type RemediationResponse = {
+  campaign_id?: string | null;
+  finding_title: string;
+  technique_id?: string | null;
+  recommendation: string;
+  owner: string;
+  priority: ConsoleSeverity;
+  due_date?: string | null;
+  tenant_id: string;
+  remediation_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvidenceManifest = {
+  evidence_id: string;
+  canonical_payload: string;
+  manifest_sha256: string;
+  generated_at: string;
+};
+
+export type CampaignExport = {
+  tenant_id: string;
+  campaign: CampaignResponse;
+  timeline: Array<{ event_type: string; reference_id: string; title: string; status: string; occurred_at: string }>;
+  evidence: EvidenceResponse[];
+  remediations: RemediationResponse[];
+  governance_history: GovernanceHistoryEvent[];
+  trend: Array<{ period: string; average_risk_score: number; average_coverage_percent: number; run_count: number }>;
+  detection_tuning: DetectionTuningItem[];
+};
+
 export type RemediationSlaItem = {
   remediation_id: string;
   finding_title: string;
@@ -153,5 +262,10 @@ export type ConsoleApi = {
   getSnapshot: (options?: { signal?: AbortSignal }) => Promise<AnalystConsoleSnapshot>;
   login?: (request: AuthLoginRequest) => Promise<AuthTokenResponse>;
   logout?: () => void;
-  getPcapEvidenceView?: (evidenceId: string) => Promise<PcapEvidenceView>;
+  getAssets?: (options?: { limit?: number; signal?: AbortSignal }) => Promise<InventoryAsset[]>;
+  getDetectionRules?: (options?: { signal?: AbortSignal }) => Promise<DetectionRule[]>;
+  getCases?: (options?: { signal?: AbortSignal }) => Promise<CampaignResponse[]>;
+  getCaseExport?: (caseId: string, options?: { signal?: AbortSignal }) => Promise<CampaignExport>;
+  getEvidenceManifest?: (evidenceId: string, options?: { signal?: AbortSignal }) => Promise<EvidenceManifest>;
+  getPcapEvidenceView?: (evidenceId: string, options?: { signal?: AbortSignal }) => Promise<PcapEvidenceView>;
 };

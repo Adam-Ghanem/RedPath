@@ -2,14 +2,19 @@ import type {
   AnalystConsoleSnapshot,
   AssessmentRunSummary,
   AuthLoginRequest,
+  CampaignExport,
+  CampaignResponse,
   AuthMeResponse,
   AuthTokenResponse,
   ConsoleApi,
   CoverageScorecard,
+  DetectionRule,
   DetectionTuningItem,
+  EvidenceManifest,
   EvidenceResponse,
   ExecutiveKpis,
   IntegrityVerification,
+  InventoryAsset,
   PcapAnalysisSummary,
   PcapEvidenceView,
   RemediationSlaItem,
@@ -47,6 +52,11 @@ export function hasAccessToken() {
 
 function normalizeBaseUrl(baseUrl: string) {
   return baseUrl.replace(/\/$/, "");
+}
+
+function boundedLimit(value: number | undefined, maximum = 100) {
+  const numeric = Number.isFinite(value) ? Math.trunc(value as number) : maximum;
+  return Math.min(maximum, Math.max(1, numeric));
 }
 
 function errorMessage(status: number, operation: string) {
@@ -141,8 +151,28 @@ export function createConsoleApi(options: ApiClientOptions = {}): ConsoleApi {
       return { scope, executiveKpis, coverage, runs, evidence, pcapAnalyses, remediationSla, detectionTuning, integrity };
     },
 
-    async getPcapEvidenceView(evidenceId: string): Promise<PcapEvidenceView> {
-      return getJson<PcapEvidenceView>(fetchImpl, baseUrl, `/evidence/${encodeURIComponent(evidenceId)}/pcap`);
+    async getAssets(options?: { limit?: number; signal?: AbortSignal }): Promise<InventoryAsset[]> {
+      return getJson<InventoryAsset[]>(fetchImpl, baseUrl, `/inventory/assets?limit=${boundedLimit(options?.limit)}`, options?.signal);
+    },
+
+    async getDetectionRules(options?: { signal?: AbortSignal }): Promise<DetectionRule[]> {
+      return getJson<DetectionRule[]>(fetchImpl, baseUrl, "/detections/rules", options?.signal);
+    },
+
+    async getCases(options?: { signal?: AbortSignal }): Promise<CampaignResponse[]> {
+      return getJson<CampaignResponse[]>(fetchImpl, baseUrl, "/cases", options?.signal);
+    },
+
+    async getCaseExport(caseId: string, options?: { signal?: AbortSignal }): Promise<CampaignExport> {
+      return getJson<CampaignExport>(fetchImpl, baseUrl, `/cases/${encodeURIComponent(caseId)}/export`, options?.signal);
+    },
+
+    async getEvidenceManifest(evidenceId: string, options?: { signal?: AbortSignal }): Promise<EvidenceManifest> {
+      return getJson<EvidenceManifest>(fetchImpl, baseUrl, `/evidence/${encodeURIComponent(evidenceId)}/manifest`, options?.signal);
+    },
+
+    async getPcapEvidenceView(evidenceId: string, options?: { signal?: AbortSignal }): Promise<PcapEvidenceView> {
+      return getJson<PcapEvidenceView>(fetchImpl, baseUrl, `/evidence/${encodeURIComponent(evidenceId)}/pcap`, options?.signal);
     },
 
     logout() {
