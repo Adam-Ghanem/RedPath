@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
+from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator
 
 
 class ReconRequest(BaseModel):
@@ -171,9 +171,15 @@ class CampaignCreate(BaseModel):
 
 class CampaignResponse(CampaignCreate):
     campaign_id: str
-    status: str
+    status: Literal["active", "in_review", "contained", "closed", "archived"]
     created_at: datetime
     updated_at: datetime
+
+
+class CampaignLifecycleUpdate(BaseModel):
+    status: Literal["active", "in_review", "contained", "closed", "archived"]
+    actor: str = Field(min_length=2, max_length=128)
+    note: str = Field(default="", max_length=2000)
 
 
 class EvidenceCreate(BaseModel):
@@ -182,7 +188,7 @@ class EvidenceCreate(BaseModel):
     evidence_type: str = Field(min_length=2, max_length=64)
     source: str = Field(min_length=2, max_length=255)
     title: str = Field(min_length=3, max_length=255)
-    sha256: str = Field(min_length=64, max_length=64)
+    sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
     technique_id: str | None = None
     notes: str = Field(default="", max_length=4000)
 
@@ -210,10 +216,18 @@ class RemediationCreate(BaseModel):
     priority: Literal["low", "medium", "high", "critical"] = "medium"
     due_date: str | None = None
 
+    @field_validator("due_date")
+    @classmethod
+    def due_date_must_be_iso_date(cls, value: str | None) -> str | None:
+        if value is not None:
+            date.fromisoformat(value)
+        return value
+
 
 class RemediationResponse(RemediationCreate):
     remediation_id: str
-    status: str
+    status: Literal["open", "in_progress", "blocked", "resolved", "closed"]
+    verification_evidence_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -222,6 +236,7 @@ class RemediationLifecycleUpdate(BaseModel):
     status: Literal["open", "in_progress", "blocked", "resolved", "closed"]
     actor: str = Field(min_length=2, max_length=128)
     note: str = Field(default="", max_length=2000)
+    verification_evidence_id: str | None = None
 
 
 class RiskAcceptanceCreate(BaseModel):
@@ -232,6 +247,13 @@ class RiskAcceptanceCreate(BaseModel):
     rationale: str = Field(min_length=20, max_length=4000)
     approver: str = Field(min_length=2, max_length=128)
     expires_on: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+    @field_validator("expires_on")
+    @classmethod
+    def expiration_must_be_current_or_future(cls, value: str) -> str:
+        if date.fromisoformat(value) < date.today():
+            raise ValueError("risk acceptance expiration must not be in the past")
+        return value
 
 
 class RiskAcceptanceResponse(RiskAcceptanceCreate):

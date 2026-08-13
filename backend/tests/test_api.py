@@ -1,7 +1,7 @@
 from app.main import app
 from fastapi.testclient import TestClient
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer test-token", "X-RedPath-Actor": "test-soc"})
 
 
 def test_health_and_scope_contracts() -> None:

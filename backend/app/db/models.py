@@ -7,6 +7,8 @@ from typing import Any
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
+from app.db.migrations import migrate
+
 
 class Base(DeclarativeBase):
     pass
@@ -90,6 +92,18 @@ class Campaign(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class CampaignTransition(Base):
+    __tablename__ = "campaign_transitions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    from_status: Mapped[str] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str] = mapped_column(String(128))
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class CampaignRunLink(Base):
     __tablename__ = "campaign_run_links"
 
@@ -97,6 +111,18 @@ class CampaignRunLink(Base):
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("assessment_runs.id"), index=True)
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EvidenceReviewEvent(Base):
+    __tablename__ = "evidence_review_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    from_status: Mapped[str] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32))
+    reviewer: Mapped[str] = mapped_column(String(128))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class EvidenceItem(Base):
@@ -129,8 +155,23 @@ class RemediationItem(Base):
     priority: Mapped[str] = mapped_column(String(16), default="medium", index=True)
     status: Mapped[str] = mapped_column(String(32), default="open", index=True)
     due_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    verification_evidence_id: Mapped[str | None] = mapped_column(
+        ForeignKey("evidence_items.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RemediationTransition(Base):
+    __tablename__ = "remediation_transitions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    remediation_id: Mapped[str] = mapped_column(ForeignKey("remediation_items.id"), index=True)
+    from_status: Mapped[str] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str] = mapped_column(String(128))
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class RiskAcceptance(Base):
@@ -207,4 +248,5 @@ def create_session_factory(database_url: str):
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     engine = create_engine(database_url, connect_args=connect_args)
     Base.metadata.create_all(engine)
+    migrate(engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)

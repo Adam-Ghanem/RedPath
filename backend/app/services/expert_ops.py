@@ -129,6 +129,11 @@ def list_evidence(session_factory: SessionFactory, campaign_id: str | None = Non
 
 def create_remediation(request: RemediationCreate, session_factory: SessionFactory) -> RemediationResponse:
     now = utcnow()
+    if request.due_date:
+        try:
+            date.fromisoformat(request.due_date)
+        except ValueError as exc:
+            raise ValueError("due_date must be an ISO date") from exc
     row = RemediationItem(
         id=str(uuid4()),
         campaign_id=request.campaign_id,
@@ -139,6 +144,7 @@ def create_remediation(request: RemediationCreate, session_factory: SessionFacto
         priority=request.priority,
         status="open",
         due_date=request.due_date,
+        verification_evidence_id=None,
         created_at=now,
         updated_at=now,
     )
@@ -172,6 +178,7 @@ def list_remediations(session_factory: SessionFactory, campaign_id: str | None =
             due_date=row.due_date,
             remediation_id=row.id,
             status=row.status,
+            verification_evidence_id=row.verification_evidence_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

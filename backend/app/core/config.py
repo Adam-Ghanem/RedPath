@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     audit_log_path: str = "./data/audit.jsonl"
     wazuh_indexer_url: str = "https://wazuh-indexer.local:9200"
     wazuh_verify_tls: bool = True
+    # Comma-separated bearer-token mappings: token:role. Keep unset until deployment secrets are configured.
+    redpath_api_keys: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
