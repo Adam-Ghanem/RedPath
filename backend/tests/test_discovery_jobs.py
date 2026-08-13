@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from pathlib import Path
 
 from app.core.audit import AuditLogger
@@ -71,6 +72,7 @@ def test_discovery_worker_persists_inventory_and_enforces_tenant_isolation(tmp_p
         completed = wait_for_completion(service, "tenant-a", queued.job_id)
         assert completed.status == "completed"
         assert completed.progress_percent == 100
+        assert completed.duration_ms is not None
         assert completed.scan_id == service._scan_id(queued.job_id)
         with session_factory() as session:
             scan = session.get(ScanRun, completed.scan_id)
@@ -238,6 +240,146 @@ def test_inventory_requires_matching_asset_and_scan_tenant(tmp_path: Path) -> No
         service.shutdown()
 
 
+def test_inventory_page_filters_paginates_and_stays_tenant_scoped(tmp_path: Path) -> None:
+    session_factory = create_session_factory(f"sqlite:///{tmp_path / 'inventory-page.db'}")
+    audit = AuditLogger(str(tmp_path / "inventory-page-audit.jsonl"))
+    recon = ReconService(ScopePolicy.from_strings(["192.168.56.0/24"]))
+
+    def fake_run(targets: list[str], profile: str, dry_run: bool, *, scan_id: str | None = None) -> ReconResult:
+        target = targets[0]
+        last_octet = int(target.rsplit(".", 1)[1])
+        service_name = "ssh" if last_octet % 2 else "https"
+        return ReconResult(
+            scan_id=scan_id or "page-scan",
+            dry_run=dry_run,
+            targets=targets,
+            commands=[],
+            assets=[
+                AssetObservation(
+                    ip=target,
+                    hostname=f"authorized-host-{last_octet}",
+                    ports=[22 if service_name == "ssh" else 443],
+                    services=[service_name],
+                )
+            ],
+        )
+
+    recon.run = fake_run  # type: ignore[method-assign]
+    service = DiscoveryJobService(recon, session_factory, audit, max_workers=1, max_jobs_per_minute=10)
+    try:
+        tenant_a_jobs = [
+            service.submit("tenant-a", [f"192.168.56.{octet}"], "safe", False, actor="alice")
+            for octet in (10, 11, 12)
+        ]
+        for job in tenant_a_jobs:
+            wait_for_completion(service, "tenant-a", job.job_id)
+        tenant_b_job = service.submit("tenant-b", ["192.168.56.20"], "safe", False, actor="bob")
+        wait_for_completion(service, "tenant-b", tenant_b_job.job_id)
+
+        first = service.inventory_page("tenant-a", limit=2, actor="alice")
+        assert len(first.items) == 2
+        assert first.pagination.has_more is True
+        assert first.pagination.next_cursor == "2"
+        assert all(item.tenant_id == "tenant-a" for item in first.items)
+
+        second = service.inventory_page(
+            "tenant-a",
+            limit=2,
+            cursor=first.pagination.next_cursor,
+            actor="alice",
+        )
+        assert len(second.items) == 1
+        assert second.pagination.has_more is False
+        assert service.inventory_page("tenant-b", limit=10).items[0].tenant_id == "tenant-b"
+        assert len(service.inventory_page("tenant-a", query="host-12").items) == 1
+        assert len(service.inventory_page("tenant-a", service="ssh").items) == 1
+        assert len(service.inventory_page("tenant-a", port=443).items) == 2
+    finally:
+        service.shutdown()
+
+
+def test_stale_recovery_fails_inflight_job_without_retrying_scan(tmp_path: Path) -> None:
+    session_factory = create_session_factory(f"sqlite:///{tmp_path / 'recovery.db'}")
+    audit = AuditLogger(str(tmp_path / "recovery-audit.jsonl"))
+    recon = ReconService(ScopePolicy.from_strings(["192.168.56.0/24"]))
+    service = DiscoveryJobService(
+        recon,
+        session_factory,
+        audit,
+        max_workers=1,
+        recovery_timeout_seconds=30,
+    )
+    try:
+        with session_factory() as session:
+            job = DiscoveryJob(
+                id="stale-job",
+                tenant_id="tenant-a",
+                actor="alice",
+                status="running",
+                dry_run=True,
+                targets=["192.168.56.10"],
+                started_at=utcnow() - timedelta(seconds=60),
+                created_at=utcnow() - timedelta(seconds=60),
+            )
+            session.add(job)
+            session.commit()
+
+        assert service.recover_stale_jobs(tenant_id="tenant-a", actor="alice") == 1
+        recovered = service.get("tenant-a", "stale-job", actor="alice")
+        assert recovered.status == "failed"
+        assert recovered.error == "RecoveryTimeout: worker exceeded bounded recovery window"
+        assert recovered.recovery_count == 1
+        assert recovered.duration_ms is not None
+        with session_factory() as session:
+            assert session.query(ScanRun).count() == 0
+            assert session.query(Asset).count() == 0
+    finally:
+        service.shutdown()
+
+
+def test_retention_cleanup_removes_only_expired_terminal_jobs(tmp_path: Path) -> None:
+    session_factory = create_session_factory(f"sqlite:///{tmp_path / 'cleanup.db'}")
+    audit = AuditLogger(str(tmp_path / "cleanup-audit.jsonl"))
+    recon = ReconService(ScopePolicy.from_strings(["192.168.56.0/24"]))
+    service = DiscoveryJobService(recon, session_factory, audit, max_workers=1)
+    try:
+        with session_factory() as session:
+            session.add(
+                DiscoveryJob(
+                    id="expired-job",
+                    tenant_id="tenant-a",
+                    actor="alice",
+                    status="completed",
+                    dry_run=True,
+                    targets=["192.168.56.10"],
+                    created_at=utcnow() - timedelta(hours=2),
+                    completed_at=utcnow() - timedelta(hours=2),
+                    expires_at=utcnow() - timedelta(hours=1),
+                )
+            )
+            session.add(
+                DiscoveryJob(
+                    id="active-job",
+                    tenant_id="tenant-a",
+                    actor="alice",
+                    status="running",
+                    dry_run=True,
+                    targets=["192.168.56.11"],
+                    created_at=utcnow() - timedelta(hours=2),
+                    started_at=utcnow() - timedelta(hours=2),
+                    expires_at=utcnow() - timedelta(hours=1),
+                )
+            )
+            session.commit()
+
+        assert service.cleanup_retention("tenant-a", actor="alice") == 1
+        with session_factory() as session:
+            assert session.get(DiscoveryJob, "expired-job") is None
+            assert session.get(DiscoveryJob, "active-job") is not None
+    finally:
+        service.shutdown()
+
+
 def test_discovery_api_is_fail_closed_and_enforces_scope(tmp_path: Path) -> None:
     settings = Settings(
         database_url=f"sqlite:///{tmp_path / 'api.db'}",
@@ -291,3 +433,7 @@ def test_discovery_api_is_fail_closed_and_enforces_scope(tmp_path: Path) -> None
     assert status["status"] == "completed"
     assert status["dry_run"] is True
     assert client.get("/api/v1/inventory/assets", headers=headers).json() == []
+    page_response = client.get("/api/v1/inventory/assets/page?limit=2&query=authorized", headers=headers)
+    assert page_response.status_code == 200
+    assert page_response.json()["items"] == []
+    assert page_response.json()["pagination"] == {"limit": 2, "next_cursor": None, "has_more": False}

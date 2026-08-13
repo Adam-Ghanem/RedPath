@@ -6,6 +6,14 @@ from app.db.models import Campaign, create_session_factory, run_alembic_downgrad
 from sqlalchemy import create_engine, inspect, text
 
 
+def test_discovery_job_observability_columns_are_additive(tmp_path: Path) -> None:
+    database_path = tmp_path / "discovery-observability.db"
+    session_factory = create_session_factory(f"sqlite:///{database_path}")
+    with session_factory() as session:
+        columns = {column["name"] for column in inspect(session.get_bind()).get_columns("discovery_jobs")}
+    assert {"duration_ms", "recovery_count", "recovered_at"}.issubset(columns)
+
+
 def test_additive_migration_backfills_legacy_tenant(tmp_path: Path) -> None:
     database_path = tmp_path / "legacy.db"
     engine = create_engine(f"sqlite:///{database_path}")

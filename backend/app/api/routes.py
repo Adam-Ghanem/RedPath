@@ -31,6 +31,7 @@ from app.kernel.contracts import (
     IntegrationContext,
     IntegrationContextRequest,
     IntegrationKernelError,
+    Page,
     PaginationRequest,
     PluginCatalogPage,
 )
@@ -436,6 +437,7 @@ def build_router(
         max_jobs_per_minute=settings.discovery_max_jobs_per_minute,
         retention_hours=settings.discovery_job_retention_hours,
         retention_max=settings.discovery_job_retention_max,
+        recovery_timeout_seconds=settings.discovery_recovery_timeout_seconds,
     )
     telemetry_resilience = TelemetryResilienceStore(
         session_factory,
@@ -1293,6 +1295,31 @@ def build_router(
             return discovery_jobs.get(get_principal().tenant_id, job_id, actor=current_actor())
         except DiscoveryJobNotFound as exc:
             raise HTTPException(status_code=404, detail="Discovery job not found") from exc
+
+    @protected_router.get(
+        "/inventory/assets/page",
+        response_model=Page[InventoryAsset],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def inventory_assets_page(
+        limit: int = Query(default=50, ge=1, le=100),
+        cursor: str | None = Query(default=None, min_length=1, max_length=6, pattern=r"^\d{1,6}$"),
+        query: str | None = Query(default=None, max_length=128),
+        service: str | None = Query(default=None, max_length=64),
+        port: int | None = Query(default=None, ge=1, le=65535),
+    ) -> Page[InventoryAsset]:
+        try:
+            return discovery_jobs.inventory_page(
+                get_principal().tenant_id,
+                limit=limit,
+                cursor=cursor,
+                query=query,
+                service=service,
+                port=port,
+                actor=current_actor(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @protected_router.get(
         "/inventory/assets",

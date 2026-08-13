@@ -9,10 +9,11 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import String, cast, delete, func, or_, select
 
 from app.core.audit import AuditLogger
 from app.db.models import Asset, DiscoveryJob, ScanRun, utcnow
+from app.kernel.contracts import Page, PaginationMetadata
 from app.models.domain import Asset as SharedAsset
 from app.schemas.contracts import AssetProvenance, DiscoveryJobStatus, InventoryAsset
 from app.services.recon import ReconService
@@ -39,11 +40,14 @@ class DiscoveryJobService:
         max_jobs_per_minute: int = 30,
         retention_hours: int = 24,
         retention_max: int = 500,
+        recovery_timeout_seconds: int = 300,
     ) -> None:
         if retention_hours < 1:
             raise ValueError("retention_hours must be positive")
         if retention_max < 1:
             raise ValueError("retention_max must be positive")
+        if recovery_timeout_seconds < 1:
+            raise ValueError("recovery_timeout_seconds must be positive")
         self.recon_service = recon_service
         self.session_factory = session_factory
         self.audit = audit
@@ -54,6 +58,7 @@ class DiscoveryJobService:
         self.max_jobs_per_minute = max(1, max_jobs_per_minute)
         self.retention_hours = retention_hours
         self.retention_max = retention_max
+        self.recovery_timeout_seconds = min(recovery_timeout_seconds, 3600)
         self._submission_times: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
 
@@ -68,6 +73,7 @@ class DiscoveryJobService:
     ) -> DiscoveryJobStatus:
         normalized_targets = self.recon_service.scope.validate_targets(targets)
         self._check_submission_rate(tenant_id)
+        self.recover_stale_jobs(tenant_id=tenant_id, actor=actor)
         # Planning validates the allow-list and creates only fixed argv lists; it never accepts shell text.
         self.recon_service.plan(normalized_targets, profile)
         job_id = str(uuid.uuid4())
@@ -121,14 +127,70 @@ class DiscoveryJobService:
                 raise DiscoveryRateLimitExceeded("Discovery submission rate limit exceeded")
             timestamps.append(now)
 
+    def recover_stale_jobs(self, *, tenant_id: str | None = None, actor: str = "system") -> int:
+        """Fail bounded stale jobs instead of retrying potentially repeated network actions."""
+        cutoff = utcnow() - timedelta(seconds=self.recovery_timeout_seconds)
+        recovered_at = utcnow()
+        with self.session_factory() as session:
+            statement = (
+                select(DiscoveryJob)
+                .where(
+                    DiscoveryJob.status == "running",
+                    DiscoveryJob.started_at.is_not(None),
+                    DiscoveryJob.started_at < cutoff,
+                )
+                .order_by(DiscoveryJob.started_at.asc())
+                .limit(50)
+            )
+            if tenant_id is not None:
+                statement = statement.where(DiscoveryJob.tenant_id == tenant_id)
+            jobs = session.scalars(statement).all()
+            for job in jobs:
+                job.status = "failed"
+                job.error = "RecoveryTimeout: worker exceeded bounded recovery window"
+                job.progress_percent = 100
+                job.completed_at = recovered_at
+                job.recovery_count = (job.recovery_count or 0) + 1
+                job.recovered_at = recovered_at
+                job.duration_ms = self._duration_ms(job.started_at, recovered_at)
+            if jobs:
+                session.commit()
+        if jobs:
+            self.audit.record(
+                "discovery.jobs_recovered",
+                {
+                    "tenant_id": tenant_id,
+                    "count": len(jobs),
+                    "timeout_seconds": self.recovery_timeout_seconds,
+                },
+                actor=actor,
+            )
+        return len(jobs)
+
+    def cleanup_retention(self, tenant_id: str, *, actor: str = "system") -> int:
+        """Run bounded terminal-job cleanup; asset rows and audit history are retained."""
+        removed = self._prune(tenant_id)
+        if removed:
+            self.audit.record(
+                "discovery.jobs_pruned",
+                {"tenant_id": tenant_id, "count": removed},
+                actor=actor,
+            )
+        return removed
+
     def _execute(self, job_id: str) -> None:
+        tenant_id = "unknown"
+        actor = "system"
+        started_at: datetime | None = None
         with self.session_factory() as session:
             job = session.get(DiscoveryJob, job_id)
             if job is None or job.status in {"completed", "failed", "running"}:
                 return
             job.status = "running"
-            job.started_at = utcnow()
+            job.started_at = job.started_at or utcnow()
+            started_at = job.started_at
             job.progress_percent = 10
+
             session.commit()
             tenant_id = job.tenant_id
             actor = job.actor
@@ -179,6 +241,7 @@ class DiscoveryJobService:
                 job.result_json = result.model_dump(mode="json")
                 job.progress_percent = 100
                 job.completed_at = completed_at
+                job.duration_ms = self._duration_ms(started_at, completed_at)
                 session.commit()
             pruned_count = self._prune(tenant_id)
             if pruned_count:
@@ -206,7 +269,9 @@ class DiscoveryJobService:
                     job.status = "failed"
                     job.error = safe_error
                     job.progress_percent = 100
-                    job.completed_at = utcnow()
+                    completed_at = utcnow()
+                    job.completed_at = completed_at
+                    job.duration_ms = self._duration_ms(started_at, completed_at)
                     session.commit()
             self.audit.record(
                 "discovery.job_failed",
@@ -249,6 +314,7 @@ class DiscoveryJobService:
         return result
 
     def inventory(self, tenant_id: str, limit: int = 100, *, actor: str = "system") -> list[InventoryAsset]:
+        """Return the legacy list shape for existing clients."""
         bounded_limit = max(1, min(limit, 500))
         with self.session_factory() as session:
             statement = (
@@ -266,6 +332,84 @@ class DiscoveryJobService:
             actor=actor,
         )
         return result
+
+    def inventory_page(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        query: str | None = None,
+        service: str | None = None,
+        port: int | None = None,
+        actor: str = "system",
+    ) -> Page[InventoryAsset]:
+        """Return a bounded, tenant-scoped inventory page without external side effects."""
+        bounded_limit = max(1, min(limit, 100))
+        offset = self._decode_cursor(cursor)
+        normalized_query = query.strip()[:128] if query and query.strip() else None
+        normalized_service = service.strip().lower()[:64] if service and service.strip() else None
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("port must be between 1 and 65535")
+
+        with self.session_factory() as session:
+            predicates = [Asset.tenant_id == tenant_id, ScanRun.tenant_id == tenant_id]
+            if normalized_query:
+                pattern = f"%{normalized_query}%"
+                predicates.append(
+                    or_(
+                        Asset.ip.ilike(pattern),
+                        func.lower(Asset.hostname).ilike(pattern),
+                    )
+                )
+            if normalized_service:
+                predicates.append(cast(Asset.services, String).ilike(f"%{normalized_service}%"))
+            if port is not None:
+                predicates.append(cast(Asset.ports, String).contains(str(port)))
+            statement = (
+                select(Asset, ScanRun)
+                .join(ScanRun, ScanRun.id == Asset.scan_id)
+                .where(*predicates)
+                .order_by(Asset.ip.asc(), Asset.id.asc())
+                .offset(offset)
+                .limit(bounded_limit + 1)
+            )
+            rows = session.execute(statement).all()
+            items = [self._to_inventory(asset, scan, tenant_id) for asset, scan in rows[:bounded_limit]]
+            if port is not None:
+                items = [item for item in items if port in item.ports]
+            has_more = len(rows) > bounded_limit
+
+        next_offset = offset + bounded_limit
+        next_cursor = str(next_offset) if has_more and next_offset <= 999999 else None
+        page = Page[InventoryAsset](
+            items=items,
+            pagination=PaginationMetadata(
+                limit=bounded_limit,
+                next_cursor=next_cursor,
+                has_more=bool(has_more and next_cursor),
+            ),
+        )
+        filter_hash = hashlib.sha256(
+            json.dumps(
+                {"query": normalized_query, "service": normalized_service, "port": port},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        self.audit.record(
+            "inventory.assets_viewed",
+            {
+                "tenant_id": tenant_id,
+                "limit": bounded_limit,
+                "offset": offset,
+                "result_count": len(items),
+                "has_more": page.pagination.has_more,
+                "filter_hash": filter_hash,
+            },
+            actor=actor,
+        )
+        return page
 
     def _prune(self, tenant_id: str) -> int:
         now = utcnow()
@@ -388,6 +532,14 @@ class DiscoveryJobService:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _decode_cursor(cursor: str | None) -> int:
+        if cursor is None:
+            return 0
+        if not cursor.isdigit() or len(cursor) > 6:
+            raise ValueError("cursor must be a bounded numeric offset")
+        return min(int(cursor), 999999)
+
+    @staticmethod
     def _is_expired(expires_at: datetime | None, now: datetime) -> bool:
         if expires_at is None:
             return False
@@ -460,7 +612,19 @@ class DiscoveryJobService:
             created_at=job.created_at,
             started_at=job.started_at,
             completed_at=job.completed_at,
+            duration_ms=job.duration_ms,
+            recovery_count=job.recovery_count or 0,
         )
+
+    @staticmethod
+    def _duration_ms(started_at: datetime | None, completed_at: datetime | None) -> int | None:
+        if started_at is None or completed_at is None:
+            return None
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=timezone.utc)
+        return max(0, int((completed_at - started_at).total_seconds() * 1000))
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=True)

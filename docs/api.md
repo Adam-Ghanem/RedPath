@@ -31,7 +31,8 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | POST | `/api/v1/discovery/jobs` | Submit bounded asynchronous discovery | Protected by analyze permission; tenant and actor are server-derived; dry-run wins over request |
 | GET | `/api/v1/discovery/jobs` | List current-tenant discovery jobs | Protected read; tenant predicate is server-derived; history is retention-bounded |
 | GET | `/api/v1/discovery/jobs/{job_id}` | Read one current-tenant job | Cross-tenant identifiers return 404; raw credentials and scanner output are not returned |
-| GET | `/api/v1/inventory/assets` | Read normalized current-tenant inventory | Protected read; joins and filters both asset and scan tenant IDs |
+| GET | `/api/v1/inventory/assets` | Read normalized current-tenant inventory | Protected read; legacy list shape; joins and filters both asset and scan tenant IDs |
+| GET | `/api/v1/inventory/assets/page` | Search and paginate normalized current-tenant inventory | Protected read; bounded cursor, query, service, and port filters; audit stores only a filter digest |
 | POST | `/api/v1/detections/ad` | Analyze exported AD observations | No AD connection; no attack execution |
 | POST | `/api/v1/risk/correlate` | Combine finding severity/CVSS and path relevance | Pure in-memory analysis |
 | POST | `/api/v1/scenarios/{scenario_id}/run` | Execute a safe evidence-driven scenario | Dry-run default; persists local summary only |
@@ -85,7 +86,7 @@ Discovery jobs accept only allow-listed IP targets and fixed safe profiles. The 
 
 Each inventory response retains the existing flat identity and observation fields and adds a strict `asset` object conforming to the shared versioned asset contract. The `provenance` object contains only bounded source, scan/job identifiers, authenticated actor, observation time, dry-run state, and a SHA-256 observation hash. Asset identity is deterministic for `(tenant_id, ip)`, so repeated authorized observations reconcile the same row rather than creating duplicate assets. Ports and services are normalized, sorted, and deduplicated.
 
-Completed and failed jobs are retained only within the configured retention window and maximum history count per tenant. Retention deletes job metadata, not normalized assets or audit records. Active queued/running jobs are not evicted by count-based pruning. Inventory is read-only and never executes scanning or mutates external systems.
+Completed and failed jobs are retained only within the configured retention window and maximum history count per tenant. Retention deletes job metadata, not normalized assets or audit records. Active queued/running jobs are not evicted by count-based pruning. `GET /api/v1/inventory/assets/page` uses a bounded numeric cursor and a maximum page size of 100; search text is capped, and audit events store a digest of filters rather than the submitted terms. Stale running jobs are failed after the bounded recovery window rather than retried automatically, preventing duplicate network actions. Inventory is read-only and never executes scanning or mutates external systems.
 
 ## AD observation request
 
