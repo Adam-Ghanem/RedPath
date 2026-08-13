@@ -24,13 +24,6 @@ _SAFE_FIELD_MAP = {
     ("location",): "location",
     ("decoder", "name"): "decoder",
     ("manager", "name"): "manager",
-    ("data", "event_id"): "event_id",
-    ("data", "srcuser"): "srcuser",
-    ("data", "dstuser"): "dstuser",
-    ("data", "host"): "host",
-    ("data", "preauth_required"): "preauth_required",
-    ("data", "enrollee_supplies_subject"): "enrollee_supplies_subject",
-    ("data", "client_auth_eku"): "client_auth_eku",
 }
 _CORRELATION_FIELD_MAP = {
     ("data", "event_id"): "event_id",
@@ -83,6 +76,8 @@ def _correlation_fields(source: dict[str, Any]) -> dict[str, str | int | bool]:
     for path, key in _CORRELATION_FIELD_MAP.items():
         value = _safe_scalar(_nested(source, path))
         if value is not None:
+            if key in {"srcuser", "dstuser", "host"}:
+                value = hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:16]
             fields[key] = value
     return fields
 

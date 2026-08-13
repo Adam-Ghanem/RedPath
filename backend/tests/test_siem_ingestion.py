@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -239,7 +240,10 @@ def test_normalized_event_has_correlation_allowlist_without_sensitive_fields() -
     document["_source"]["rule"]["description"] += " Authorization: Bearer secret-value"
     event = normalize_wazuh_document(document, "lab")
 
-    assert event.correlation_fields == {"event_id": "4769", "srcuser": "analyst01"}
+    assert event.correlation_fields == {
+        "event_id": "4769",
+        "srcuser": hashlib.sha256(b"analyst01").hexdigest()[:16],
+    }
     assert "secret-value" not in event.summary
     assert "password" not in event.model_dump_json()
     assert "command" not in event.model_dump_json()

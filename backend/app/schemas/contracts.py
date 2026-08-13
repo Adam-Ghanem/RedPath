@@ -5,9 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator
 
-from app.models.telemetry import TelemetryEvent
-
 from app.models.domain import Asset as SharedAsset
+from app.models.telemetry import TelemetryEvent
 
 
 class DiscoveryJobCreate(BaseModel):
