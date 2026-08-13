@@ -22,11 +22,12 @@ printf '%s\n' '== Frontend: tests, typecheck, build =='
   npm run build
 )
 
-printf '%s\n' '== Migrations and documentation consistency =='
+printf '%s\n' '== Release verification =='
 (
   cd "$repo_root"
   PYTHONPATH=backend python ci/check_migrations.py
   PYTHONPATH=backend python ci/check_docs.py
+  PYTHONPATH=backend python ci/release_verify.py
 )
 
 printf '%s\n' '== Repository: whitespace, compose, secret patterns =='

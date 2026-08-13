@@ -30,3 +30,10 @@ def test_documentation_check_command_is_deterministic() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "public naming" in result.stdout
+
+
+def test_release_verification_command_is_deterministic() -> None:
+    result = run_check("release_verify.py")
+
+    assert result.returncode == 0, result.stderr
+    assert "required checks" in result.stdout

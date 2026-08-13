@@ -137,11 +137,72 @@ jobs:
           dockerfile: frontend/Dockerfile.demo
           failure-threshold: error
 
+  dependency_review:
+    name: SBOM and dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Review pull-request dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies for audit artifact
+        run: python -m pip install --requirement backend/requirements.txt pip-audit==2.8.0
+      - name: Generate Python dependency audit artifact
+        run: pip-audit -r backend/requirements.txt --format json --output pip-audit.json
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies for audit artifact
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+      - name: Generate frontend dependency audit artifact
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high --json > npm-audit.json
+      - name: Generate backend SPDX SBOM
+        uses: anchore/sbom-action@v0.18.0
+        with:
+          path: ./backend
+          format: spdx-json
+          output-file: sbom-backend.spdx.json
+      - name: Generate frontend SPDX SBOM
+        uses: anchore/sbom-action@v0.18.0
+        with:
+          path: ./frontend
+          format: spdx-json
+          output-file: sbom-frontend.spdx.json
+      - name: Upload dependency and SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: redpath-dependency-review-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            pip-audit.json
+            frontend/npm-audit.json
+            sbom-backend.spdx.json
+            sbom-frontend.spdx.json
+
   containers:
     name: Container build and vulnerability gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [backend, frontend, migration_docs, repository]
+    needs: [backend, frontend, migration_docs, repository, dependency_review]
     permissions:
       contents: read
       security-events: write
@@ -168,3 +229,29 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL,HIGH
+
+  release_verify:
+    name: Release verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [backend, frontend, migration_docs, repository, dependency_review, containers]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install --requirement backend/requirements.txt
+      - name: Run release verification
+        run: PYTHONPATH=backend python ci/release_verify.py | tee release-verification.txt
+      - name: Upload release verification result
+        uses: actions/upload-artifact@v4
+        with:
+          name: redpath-release-verification-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: release-verification.txt

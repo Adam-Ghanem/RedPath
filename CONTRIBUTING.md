@@ -55,9 +55,10 @@ If Docker is unavailable locally, run the non-container release checks and recor
 ```bash
 PYTHONPATH=backend python ci/check_migrations.py
 PYTHONPATH=backend python ci/check_docs.py
+PYTHONPATH=backend python ci/release_verify.py
 ```
 
-Database changes must use the existing migration-managed process, preserve tenant predicates and audit integrity, and remain additive unless a separately reviewed release plan says otherwise. Documentation changes must keep local links, public API references, and user-facing naming consistent.
+Review the exact-commit CI artifacts for dependency audit results, SPDX SBOMs, container scans, and release verification before requesting merge. Database changes must use the existing migration-managed process, preserve tenant predicates and audit integrity, and remain additive unless a separately reviewed release plan says otherwise. Documentation changes must keep local links, public API references, and user-facing naming consistent. When persistence or deployment topology changes, review [`docs/backup-restore-drill.md`](docs/backup-restore-drill.md) and record the migration and rollback plan.
 
 ## Pull requests
 

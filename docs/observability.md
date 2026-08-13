@@ -24,3 +24,7 @@ The health endpoints deliberately report no database credentials, Wazuh URLs, te
 | `RELEASE` | `dev` | Release identifier returned by health |
 
 The metrics registry is process-local and resets on restart. This is acceptable for local/demo use and keeps the milestone free of a new telemetry dependency; production operations should aggregate with a collector and retain deployment-level counters separately.
+
+## Release operations
+
+Service targets, structured log field boundaries, request-correlation guidance, proposed SLOs, safe-failure behavior, and operational runbooks are maintained in [`docs/release-operations.md`](release-operations.md). Backup and restore validation is defined in [`docs/backup-restore-drill.md`](backup-restore-drill.md). These documents describe operational procedures only; they do not authorize external-system mutation or bypass tenant, RBAC, audit, or dry-run controls.

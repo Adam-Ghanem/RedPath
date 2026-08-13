@@ -1,18 +1,38 @@
 # Branch protection and release safeguards
 
-RedPath’s default branch should accept changes only through reviewed pull requests. This keeps security-sensitive contracts, tenant isolation, audit behavior, and dry-run boundaries reviewable before release.
+RedPath’s default branch should accept changes only through reviewed pull requests. This keeps security-sensitive contracts, tenant isolation, audit behavior, privacy boundaries, and dry-run behavior reviewable before release.
 
 ## Required repository settings
 
-Enable branch protection on the default branch and require pull requests before merge. Require the complete CI workflow to pass, including backend quality on Python 3.11 and 3.12, frontend quality on Node.js 20 and 22, migration and documentation checks, repository hygiene, and the container vulnerability gate. Require at least one maintainer approval, dismiss stale approvals after new commits, require branches to be up to date before merge, and prevent force pushes and branch deletion.
+Enable branch protection on the default branch and require pull requests before merge. Require the branch to be up to date, require at least one maintainer approval, dismiss stale approvals after new commits, and prevent force pushes and branch deletion. Keep workflow files, protected environments, and branch-protection settings restricted to maintainers.
 
-Keep workflow files and branch-protection settings restricted to maintainers. Do not allow pull-request code to deploy, access production credentials, or alter protected environments. Any future deployment workflow should use environment-scoped credentials, explicit protected-environment approval, and a separate review from validation-only CI.
+The required status checks should include the exact checks below. A check is required only when its job has completed successfully on the commit under review; do not accept a similarly named local or manually reported result.
+
+| Required check | Control |
+| --- | --- |
+| `Backend quality (Python 3.11)` | Backend tests, lint, SAST, compilation, dependency consistency, and Python dependency audit |
+| `Backend quality (Python 3.12)` | Cross-version backend quality parity |
+| `Frontend quality (Node 20)` | Frontend tests, TypeScript quality, production build, and dependency audit |
+| `Frontend quality (Node 22)` | Cross-version frontend quality parity |
+| `Migration and documentation consistency` | Additive migration check, focused regression tests, links, API paths, and public naming |
+| `Repository quality gates` | Whitespace, tracked secret-pattern scan, Compose validation, and Dockerfile linting |
+| `SBOM and dependency review` | SPDX SBOM artifacts and pull-request dependency review |
+| `Container build and vulnerability gate` | Reproducible image builds and High/Critical vulnerability gate |
+| `Release verification` | Required release files, secure runtime defaults, operational docs, and safe-failure controls |
+
+Require CI artifacts to be retained according to repository policy, including the backend and frontend dependency reports, SPDX SBOMs, migration/docs output, release verification output, and container scan results. Do not treat an artifact as a secret store; reports must exclude credentials, raw telemetry, packet bytes, customer data, and unredacted identifiers.
 
 ## Release checklist
 
-Before release, the maintainer should confirm that the required checks passed on the exact commit being released, database changes have a reviewed forward migration and a compatible rollback plan, documentation checks pass, and the release notes contain no secrets, customer data, raw telemetry, or internal planning identifiers. The release must preserve server-derived actor identity, tenant predicates, RBAC, audit-chain integrity, dry-run defaults, and read-only external-system boundaries.
+Before release, the maintainer should confirm that all required checks passed on the exact commit being released, dependency review has no unreviewed high-risk change, SBOMs were generated from the exact source and image digests, container hardening checks passed, and the release verification script succeeded. Database changes require a reviewed forward migration and compatible rollback or isolated-restore plan. The backup/restore drill design must be reviewed when persistence, retention, or deployment topology changes.
 
-CI must remain validation-only. It must not run network discovery, send packets, inject traffic, mutate SIEM or directory systems, execute arbitrary shell input, or perform destructive operations. Container vulnerability findings and migration failures block release until fixed or explicitly reviewed under the repository’s security process.
+The release must preserve server-derived actor identity, tenant predicates, RBAC, audit-chain integrity, privacy redaction, dry-run defaults, and read-only external-system boundaries. Release notes and artifacts must contain no secrets, customer data, raw telemetry, or internal planning identifiers.
+
+## Protected environments and safe failure
+
+Do not allow pull-request code to deploy, access production credentials, or alter protected environments. Any future deployment workflow should use environment-scoped credentials, explicit protected-environment approval, and a separate review from validation-only CI. CI must not run network discovery, send packets, inject traffic, mutate SIEM or directory systems, execute arbitrary shell input, or perform destructive operations.
+
+When a required check fails, stop promotion and preserve the diagnostic artifact. Do not bypass authentication, tenant predicates, audit logging, dry-run defaults, scope validation, or readiness checks to make a release green. Rollback selects a previously verified immutable artifact through the protected deployment process; it does not rewrite audit history or mutate external systems.
 
 ## Local verification
 
@@ -20,11 +40,13 @@ Run the deterministic repository gate from the repository root:
 
 ```bash
 ./ci/quality-gate.sh
+./ci/release-verify.sh
 ```
 
-When Docker is unavailable, run the focused non-container checks separately and record the container limitation rather than weakening the CI gate:
+When Docker is unavailable, run the focused non-container checks separately and record the limitation rather than weakening the hosted gate:
 
 ```bash
 PYTHONPATH=backend python ci/check_migrations.py
 PYTHONPATH=backend python ci/check_docs.py
+PYTHONPATH=backend python ci/release_verify.py
 ```

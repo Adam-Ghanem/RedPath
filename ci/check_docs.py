@@ -29,13 +29,19 @@ REQUIRED_FILES = (
     REPO_ROOT / "docs" / "branch-protection.md",
     REPO_ROOT / "docs" / "ci-setup.md",
     REPO_ROOT / "docs" / "database.md",
+    REPO_ROOT / "docs" / "backup-restore-drill.md",
+    REPO_ROOT / "docs" / "release-operations.md",
     REPO_ROOT / "ci" / "quality-gate.sh",
+    REPO_ROOT / "ci" / "release-verify.sh",
+    REPO_ROOT / "ci" / "release_verify.py",
     REPO_ROOT / "ci" / "check_migrations.py",
 )
 REQUIRED_COMMANDS = (
     "./ci/quality-gate.sh",
+    "./ci/release-verify.sh",
     "python ci/check_migrations.py",
     "python ci/check_docs.py",
+    "python ci/release_verify.py",
 )
 
 
