@@ -299,6 +299,39 @@ class DetectionObservation(Base):
     recommendation: Mapped[str] = mapped_column(Text, default="")
 
 
+class TelemetryIngestionRun(Base):
+    __tablename__ = "telemetry_ingestion_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="wazuh")
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    fetched_count: Mapped[int] = mapped_column(Integer, default=0)
+    stored_count: Mapped[int] = mapped_column(Integer, default=0)
+    deduplicated_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TelemetryEvent(Base):
+    __tablename__ = "telemetry_events"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    ingestion_run_id: Mapped[str] = mapped_column(ForeignKey("telemetry_ingestion_runs.id"), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="wazuh")
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    severity: Mapped[str] = mapped_column(String(16), index=True)
+    rule_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    rule_description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    asset_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    technique_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    summary: Mapped[str] = mapped_column(String(1000), default="")
+    safe_fields: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    raw_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 

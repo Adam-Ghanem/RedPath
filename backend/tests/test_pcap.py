@@ -95,7 +95,6 @@ def test_pcap_api_persists_metadata_and_enforces_role_and_tenant_isolation(tmp_p
     unauthorized = client.post(
         "/api/v1/pcap/analyses",
         files={"file": ("capture.pcap", data, "application/vnd.tcpdump.pcap")},
-        headers={"X-Tenant-ID": "tenant-a"},
     )
     assert unauthorized.status_code == 401
 

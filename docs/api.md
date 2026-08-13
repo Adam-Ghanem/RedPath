@@ -29,6 +29,8 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/integrity/audit` | Verify the chained JSONL audit log | Read-only integrity verification |
 | GET | `/api/v1/trends/risk` | Aggregate persisted risk and coverage by period | Derived from stored run records |
 | GET | `/api/v1/detection-tuning` | Return gap-driven rule-tuning queue | Recommendations only; no Wazuh mutation |
+| POST | `/api/v1/siem/telemetry/ingest` | Retrieve and persist redacted, tenant-scoped Wazuh projections | RBAC-protected read-only external query; bounded window; audit logged |
+| GET | `/api/v1/siem/telemetry` | Read redacted local telemetry projections | RBAC-protected; server-derived tenant predicate; audit logged |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
 | POST | `/api/v1/purple/analyze` | Compare expected techniques against Wazuh-style alerts | Accepts imported evidence; no rule changes |
 | POST | `/api/v1/reports/pdf` | Generate a local PDF from findings and optional coverage | No external side effect |
@@ -84,7 +86,7 @@ A campaign is a bounded assessment context with an owner and scope snapshot. Evi
 
 ## Offline PCAP forensics
 
-The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations in memory, register the digest in the existing evidence workflow, and persist only normalized metadata. The upload is role-gated with `X-RedPath-Role` (`soc_analyst` or `incident_commander`) and tenant-scoped with `X-Tenant-ID`; see [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, and parser coverage.
+The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations in memory, register the digest in the existing evidence workflow, and persist only normalized metadata. Upload requires an authenticated principal with the `analyze` permission, while reads require the `read` permission; the tenant is derived from the authenticated session. See [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, and parser coverage.
 
 ## Purple-team request
 
@@ -100,13 +102,17 @@ The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute
 
 The report calculates coverage as detected expected techniques divided by expected techniques. A gap includes the technique ID and a recommendation to tune rules and add a synthetic regression fixture. A future adapter can populate `alerts` from the Wazuh indexer query shown in the lab guide.
 
+## SIEM/Wazuh telemetry ingestion
+
+The ingestion contract and operator guidance are documented in [`docs/siem-ingestion.md`](siem-ingestion.md). Both telemetry endpoints require authenticated bearer credentials: ingestion requires the `analyze` permission and readback requires `read`. The service derives the tenant from the authenticated session and rejects an ingestion payload for another tenant. The raw Wazuh document is never returned or stored; only a bounded normalized projection and a SHA-256 provenance digest are retained. The external adapter is limited to the configured Wazuh alerts search index and has no mutation methods.
+
 ## Error semantics
 
 Missing or invalid bearer credentials return HTTP 401 with a bearer challenge. A valid principal without the required role or permission returns HTTP 403, and a bounded request budget returns HTTP 429. A target outside the allow-list also returns HTTP 403. A malformed graph or unknown technique returns HTTP 422. The service returns structured FastAPI validation errors for malformed payloads. Audit events include a request operation, the authenticated actor, the effective dry-run mode, relevant identifiers, and a chained digest.
 
 ## Asynchronous discovery jobs and inventory
 
-The discovery module adds a durable, bounded worker boundary for discovery. These endpoints require a bearer token configured with `REDPATH_DISCOVERY_API_TOKEN` and a tenant value matching `REDPATH_DISCOVERY_TENANT_ID` (or the `X-RedPath-Tenant` header when it matches the server-side value). If the token is unset, the endpoints fail closed with HTTP 503 rather than exposing an unauthenticated discovery control plane.
+The discovery module adds a durable, bounded worker boundary for discovery. These endpoints require authenticated bearer credentials and the appropriate RBAC permission; the effective tenant is derived from the authenticated session. The service never exposes an unauthenticated discovery control plane.
 
 | Method | Endpoint | Purpose | Safety behavior |
 | --- | --- | --- | --- |

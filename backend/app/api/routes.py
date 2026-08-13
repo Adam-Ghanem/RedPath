@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+import httpx
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.core.audit import AuditLogger
@@ -22,6 +24,7 @@ from app.core.scope import ScopePolicy, ScopeViolation
 from app.db.models import create_session_factory
 from app.kernel.contracts import IntegrationAnalysisRequest, IntegrationContext, IntegrationContextRequest
 from app.kernel.service import IntegrationKernel
+from app.models.telemetry import TelemetryIngestionResponse, TelemetryListResponse, TelemetryQuery
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
@@ -115,6 +118,8 @@ from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
 from app.services.scenario_runner import execute_scenario, list_run_summaries
 from app.services.scenarios import list_scenarios
+from app.services.siem_ingestion import SiemIngestionService, list_telemetry
+from app.services.wazuh import WazuhIndexerClient
 
 
 def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> APIRouter:
@@ -227,6 +232,18 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         max_workers=settings.recon_max_workers,
         max_jobs_per_minute=settings.discovery_max_jobs_per_minute,
     )
+    siem_client = WazuhIndexerClient(
+        settings.wazuh_indexer_url,
+        settings.wazuh_username,
+        settings.wazuh_password,
+        verify_tls=settings.wazuh_verify_tls,
+        timeout_seconds=settings.siem_request_timeout_seconds,
+    )
+    siem_service = SiemIngestionService(
+        siem_client,
+        session_factory,
+        max_query_window_hours=settings.siem_max_query_window_hours,
+    )
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
@@ -251,6 +268,63 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         if not settings.metrics_enabled:
             raise HTTPException(status_code=404, detail="metrics are disabled")
         return PlainTextResponse(metrics.prometheus(), media_type="text/plain; version=0.0.4")
+
+    @protected_router.post(
+        "/siem/telemetry/ingest",
+        response_model=TelemetryIngestionResponse,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    async def siem_telemetry_ingest(request: TelemetryQuery) -> TelemetryIngestionResponse:
+        principal = get_principal()
+        if request.tenant_id != principal.tenant_id:
+            raise HTTPException(status_code=403, detail="Telemetry tenant does not match authenticated tenant")
+        try:
+            result = await siem_service.ingest(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Wazuh read failed") from exc
+        audit.record(
+            "siem.telemetry_ingested",
+            {
+                "tenant_id": result.tenant_id,
+                "run_id": result.run_id,
+                "fetched_count": result.fetched_count,
+                "stored_count": result.stored_count,
+                "deduplicated_count": result.deduplicated_count,
+            },
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.get(
+        "/siem/telemetry",
+        response_model=TelemetryListResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def siem_telemetry_list(
+        start: datetime = Query(...),  # noqa: B008
+        end: datetime = Query(...),  # noqa: B008
+        limit: int = Query(default=200, ge=1, le=1000),  # noqa: B008
+    ) -> TelemetryListResponse:
+        principal = get_principal()
+        if start.tzinfo is None or end.tzinfo is None:
+            raise HTTPException(status_code=422, detail="telemetry query bounds must be timezone-aware")
+        if start >= end:
+            raise HTTPException(status_code=422, detail="telemetry query start must be before end")
+        result = list_telemetry(
+            session_factory,
+            tenant_id=principal.tenant_id,
+            start=start.astimezone(timezone.utc),
+            end=end.astimezone(timezone.utc),
+            limit=limit,
+        )
+        audit.record(
+            "siem.telemetry_listed",
+            {"tenant_id": principal.tenant_id, "event_count": len(result.events)},
+            actor=principal.username,
+        )
+        return result
 
     @protected_router.get("/scope", dependencies=[Depends(permission_dependency("read"))])
     def get_scope() -> dict[str, list[str] | bool]:

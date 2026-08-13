@@ -1,8 +1,8 @@
-# AI-02 identity, tenancy, RBAC, and API protection
+# Identity, tenancy, RBAC, and API protection
 
 ## Scope
 
-AI-02 adds the first cohesive identity and API-security vertical slice for RedPath. The implementation protects the existing FastAPI operational API with authenticated, opaque bearer sessions; assigns every authenticated request to one tenant; applies route-level role permissions; derives actor fields from the authenticated principal; and adds an idempotent schema migration for identity and tenant ownership records.
+This capability protects the FastAPI operational API with authenticated, opaque bearer sessions; assigns every authenticated request to one tenant; applies route-level role permissions; derives actor fields from the authenticated principal; and adds an idempotent schema migration for identity and tenant ownership records.
 
 The public surface is deliberately small. The health endpoint remains public for service checks. Bootstrap and token issuance are public but rate-limited, and bootstrap is disabled unless `AUTH_BOOTSTRAP_TOKEN` is configured. All operational and identity-management endpoints require a bearer token.
 

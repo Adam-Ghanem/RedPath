@@ -1,6 +1,6 @@
 # Platform Contracts and Integration Kernel
 
-AI-01 provides the control-plane boundary that connects RedPath modules without allowing domain integrations to bypass shared safety controls. The implementation lives in `backend/app/kernel/`, while plugin metadata and adapters remain under `backend/app/plugins/`. The kernel is deliberately narrow: it validates typed context, resolves a registered read-only plugin, invokes declarative planning or observation analysis, and records metadata-only audit events.
+The platform kernel provides the control-plane boundary that connects RedPath modules without allowing domain integrations to bypass shared safety controls. The implementation lives in `backend/app/kernel/`, while plugin metadata and adapters remain under `backend/app/plugins/`. The kernel is deliberately narrow: it validates typed context, resolves a registered read-only plugin, invokes declarative planning or observation analysis, and records metadata-only audit events.
 
 > The kernel plans and analyzes; it does not execute shell commands, perform uncontrolled discovery, persist raw payloads, or grant permissions.
 
@@ -18,7 +18,7 @@ All new kernel payloads carry `schema_version: "1.0"`. Unknown fields are reject
 | `NormalizedObservation` | Analyzer input | Versioned, tenant-tagged, bounded metadata envelope |
 | `IntegrationAnalysis` | Analyzer response | Versioned, plugin identity, observation count, typed findings, warnings |
 
-The shared `Asset` contract from the AI-01 acceptance branch remains under `backend/app/models/domain.py`. It is intentionally independent from the kernel envelope so asset inventory, PCAP, SIEM, and detection modules can use the same domain object without coupling their transport concerns.
+The shared `Asset` contract remains under `backend/app/models/domain.py`. It is intentionally independent from the kernel envelope so asset inventory, PCAP, SIEM, and detection modules can use the same domain object without coupling their transport concerns.
 
 ## Plugin registry
 
@@ -124,7 +124,7 @@ Every future plugin should provide focused contract tests for manifest validatio
 
 ## Verification
 
-The AI-01 vertical slice is covered by `backend/tests/test_kernel.py`. The complete backend suite and lint command used for delivery are:
+The platform kernel is covered by `backend/tests/test_kernel.py`. The complete backend suite and lint command used for delivery are:
 
 ```bash
 pytest -q backend/tests

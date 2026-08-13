@@ -1,12 +1,12 @@
 # Offline PCAP forensics and evidence pipeline
 
-AI-04 adds a read-only, offline PCAP analysis slice to RedPath. The upload is parsed from memory, hashed before analysis, converted into bounded normalized observations, linked to the existing `evidence_items` workflow, and persisted as tenant-scoped metadata. The raw capture bytes are not retained by this slice.
+This read-only, offline PCAP analysis capability parses uploads from memory, hashes them before analysis, converts them into bounded normalized observations, links them to the existing `evidence_items` workflow, and persists tenant-scoped metadata. The raw capture bytes are not retained by this capability.
 
 ## Safety and trust boundaries
 
 The module never opens a socket, resolves a hostname, executes a command, or sends capture content to an external service. It accepts only files whose names end in `.pcap` or `.pcapng`, enforces the configured `PCAP_MAX_UPLOAD_BYTES` limit (50 MiB by default), rejects unsafe path components, and computes SHA-256 over the exact uploaded bytes. The parser has hard limits of 1,000 retained observations, 500 distinct DNS names, and 100 endpoints; packet counts and the original hash remain complete when normalized observations are capped.
 
-PCAP analysis and retrieval require the `soc_analyst` or `incident_commander` role contract plus an `X-Tenant-ID` header. The current prototype exposes that contract through headers because the repository’s broader identity middleware is still being evolved by AI-02. Production deployment must bind these headers to a verified authenticated principal and server-side tenant claims; clients must not be allowed to self-assert them.
+PCAP upload and analysis require an authenticated bearer session with the `analyze` permission, while retrieval requires the `read` permission. The service derives tenant identity from the verified authenticated principal; clients cannot self-assert a tenant through request headers.
 
 > The endpoint is an evidence-plane operation. It does not perform discovery or any active network action, and it does not store credentials, payload content, or raw packet bytes.
 
@@ -14,9 +14,9 @@ PCAP analysis and retrieval require the `soc_analyst` or `incident_commander` ro
 
 | Method | Endpoint | Purpose | Required controls |
 | --- | --- | --- | --- |
-| POST | `/api/v1/pcap/analyses` | Upload and analyze one offline capture | `X-RedPath-Role`, `X-Tenant-ID`, multipart file, optional `campaign_id` |
-| GET | `/api/v1/pcap/analyses` | List recent analyses for one tenant | `X-RedPath-Role`, `X-Tenant-ID`; `limit` is clamped to 1–100 |
-| GET | `/api/v1/pcap/analyses/{analysis_id}` | Retrieve one normalized analysis | `X-RedPath-Role`, `X-Tenant-ID`; tenant is part of the query predicate |
+| POST | `/api/v1/pcap/analyses` | Upload and analyze one offline capture | Bearer authentication with `analyze`; multipart file; optional `campaign_id` |
+| GET | `/api/v1/pcap/analyses` | List recent analyses for one tenant | Bearer authentication with `read`; `limit` is clamped to 1–100 |
+| GET | `/api/v1/pcap/analyses/{analysis_id}` | Retrieve one normalized analysis | Bearer authentication with `read`; tenant is part of the query predicate |
 
 A successful analysis returns `schema_version: "1.0"`, an `analysis_id`, an `evidence_id`, the original `sha256`, capture format, packet count, normalized protocol counts, bounded endpoint statistics, DNS query names, supported observations, timestamps, and warnings. The associated evidence record uses `evidence_type: "pcap"`, `source: "offline-upload"`, and the same SHA-256 digest, allowing it to participate in existing review, campaign timeline, manifest, and export workflows.
 
@@ -24,8 +24,7 @@ Example request:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/pcap/analyses \
-  -H 'X-RedPath-Role: soc_analyst' \
-  -H 'X-Tenant-ID: lab-tenant' \
+  -H "Authorization: Bearer $REDPATH_ACCESS_TOKEN" \
   -F 'file=@authorized-capture.pcap' \
   -F 'campaign_id=campaign-id-if-known'
 ```
