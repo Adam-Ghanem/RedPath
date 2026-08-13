@@ -28,6 +28,8 @@ from app.models.telemetry import TelemetryIngestionResponse, TelemetryListRespon
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
+    AttackPathAnalysisRequest,
+    AttackPathAnalysisResponse,
     CampaignCreate,
     CampaignExport,
     CampaignResponse,
@@ -81,6 +83,7 @@ from app.schemas.identity import (
 )
 from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary
 from app.services.ad_detection import detect_ad_findings
+from app.services.attack_path_risk import analyze_attack_path_risk
 from app.services.correlation import correlate_findings
 from app.services.detection_framework import DetectionRuleCatalog
 from app.services.discovery_jobs import (
@@ -860,7 +863,34 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         return result
 
     @protected_router.post(
-        "/purple/analyze", response_model=DetectionGapReport, dependencies=[Depends(permission_dependency("analyze"))]
+        "/attack-paths/analyze",
+        response_model=AttackPathAnalysisResponse,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def attack_paths_analyze(request: AttackPathAnalysisRequest) -> AttackPathAnalysisResponse:
+        principal = get_principal()
+        if request.tenant_id != principal.tenant_id:
+            raise HTTPException(status_code=403, detail="Attack-path tenant does not match authenticated tenant")
+        try:
+            result = analyze_attack_path_risk(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "attack_paths.analyzed",
+            {
+                "tenant_id": request.tenant_id,
+                "node_count": result.graph_summary.node_count,
+                "edge_count": result.graph_summary.edge_count,
+                "path_count": result.graph_summary.viable_path_count,
+                "critical_path_count": result.graph_summary.critical_path_count,
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/purple/analyze",
+        response_model=DetectionGapReport,
+        dependencies=[Depends(permission_dependency("analyze"))],
     )
     def purple_analyze(request: PurpleAnalysisRequest) -> DetectionGapReport:
         try:
