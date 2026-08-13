@@ -54,6 +54,8 @@ from app.schemas.contracts import (
     CorrelatedRisk,
     CorrelationRequest,
     CoverageScorecard,
+    DetectionCoverageReport,
+    DetectionCoverageRequest,
     DetectionEvaluationRequest,
     DetectionEvaluationResponse,
     DetectionGapReport,
@@ -72,6 +74,8 @@ from app.schemas.contracts import (
     GraphResult,
     IntegrityVerification,
     InventoryAsset,
+    NormalizedRegressionReport,
+    NormalizedRegressionRequest,
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
@@ -1027,6 +1031,94 @@ def build_router(
                 "total_cases": result.total_cases,
                 "false_positive_rate": result.false_positive_rate,
             },
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/coverage",
+        response_model=DetectionCoverageReport,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_coverage(request: DetectionCoverageRequest) -> DetectionCoverageReport:
+        principal = get_principal()
+        if any(event.tenant_id != principal.tenant_id for event in request.telemetry):
+            raise HTTPException(status_code=403, detail="Telemetry tenant does not match authenticated tenant")
+        if any(path.tenant_id != principal.tenant_id for path in request.attack_paths):
+            raise HTTPException(status_code=403, detail="Attack-path tenant does not match authenticated tenant")
+        try:
+            result = detection_catalog.coverage_report(
+                request.telemetry,
+                request.rule_ids,
+                tenant_id=principal.tenant_id,
+                actor=principal.username,
+                attack_paths=request.attack_paths,
+                dry_run=settings.dry_run or request.dry_run,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.coverage_calculated",
+            {
+                "run_id": result.run_id,
+                "tenant_id": result.tenant_id,
+                "expected_rule_count": result.expected_rule_count,
+                "detected_rule_count": result.detected_rule_count,
+                "path_count": result.path_count,
+                "covered_path_count": result.covered_path_count,
+                "dry_run": result.dry_run,
+            },
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/regressions/normalized",
+        response_model=NormalizedRegressionReport,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_normalized_regressions(request: NormalizedRegressionRequest) -> NormalizedRegressionReport:
+        principal = get_principal()
+        if any(
+            event.tenant_id != principal.tenant_id
+            for fixture in request.fixtures
+            for event in fixture.telemetry
+        ):
+            raise HTTPException(
+                status_code=403, detail="Regression telemetry tenant does not match authenticated tenant"
+            )
+        if any(
+            path.tenant_id != principal.tenant_id
+            for fixture in request.fixtures
+            for path in fixture.attack_paths
+        ):
+            raise HTTPException(
+                status_code=403, detail="Regression attack-path tenant does not match authenticated tenant"
+            )
+        try:
+            result = detection_catalog.run_normalized_regressions(
+                request.fixtures,
+                request.rule_ids,
+                tenant_id=principal.tenant_id,
+                actor=principal.username,
+                dry_run=settings.dry_run or request.dry_run,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.normalized_regression_completed",
+            {
+                "run_id": result.run_id,
+                "tenant_id": result.tenant_id,
+                "total_cases": result.total_cases,
+                "failed_cases": result.failed_cases,
+                "false_positive_rate": result.false_positive_rate,
+                "dry_run": result.dry_run,
+            },
+            actor=principal.username,
         )
         return result
 

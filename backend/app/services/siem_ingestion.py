@@ -24,6 +24,13 @@ _SAFE_FIELD_MAP = {
     ("location",): "location",
     ("decoder", "name"): "decoder",
     ("manager", "name"): "manager",
+    ("data", "event_id"): "event_id",
+    ("data", "srcuser"): "srcuser",
+    ("data", "dstuser"): "dstuser",
+    ("data", "host"): "host",
+    ("data", "preauth_required"): "preauth_required",
+    ("data", "enrollee_supplies_subject"): "enrollee_supplies_subject",
+    ("data", "client_auth_eku"): "client_auth_eku",
 }
 _CORRELATION_FIELD_MAP = {
     ("data", "event_id"): "event_id",
@@ -139,10 +146,10 @@ def normalize_wazuh_document(document: dict[str, Any], tenant_id: str) -> Teleme
     rule_id = _bounded_text(_nested(source, ("rule", "id")), 64)
     description = _redacted_text(_nested(source, ("rule", "description")), 1000)
     agent_id = _bounded_text(_nested(source, ("agent", "id")), 128)
-    safe_fields: dict[str, str] = {}
+    safe_fields: dict[str, str | int | float | bool] = {}
     for path, key in _SAFE_FIELD_MAP.items():
-        value = _bounded_text(_nested(source, path), 256)
-        if value:
+        value = _safe_scalar(_nested(source, path))
+        if value is not None and value != "":
             safe_fields[key] = value
     asset_id = f"wazuh-agent:{agent_id}" if agent_id else None
     return TelemetryEvent(

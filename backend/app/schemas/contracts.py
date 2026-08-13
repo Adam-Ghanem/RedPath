@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
+from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator
+
+from app.models.telemetry import TelemetryEvent
 
 from app.models.domain import Asset as SharedAsset
 
@@ -289,13 +291,18 @@ class WazuhAlert(BaseModel):
 
 
 class DetectionCondition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     path: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     operator: Literal["equals", "contains", "starts_with", "in"]
     value: Any
 
 
 class DetectionRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     rule_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    version: int = Field(default=1, ge=1, le=10_000)
     title: str = Field(min_length=3, max_length=255)
     description: str = Field(min_length=10, max_length=2000)
     technique_ids: list[str] = Field(min_length=1, max_length=8)
@@ -315,8 +322,20 @@ class DetectionRuleCreate(DetectionRule):
     pass
 
 
+class DetectionRuleProvenance(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rule_id: str
+    version: int = Field(ge=1)
+    source: Literal["builtin", "registered"]
+    content_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    deployment_status: Literal["draft", "testing", "production"]
+    requires_approval: bool
+
+
 class DetectionMatch(BaseModel):
     rule_id: str
+    rule_version: int = Field(default=1, ge=1)
     technique_ids: list[str]
     alert_ids: list[str]
     matched_condition_count: int = Field(ge=1)
@@ -324,6 +343,8 @@ class DetectionMatch(BaseModel):
     last_seen: datetime | None = None
     group_key: str = "all-events"
     rationale: str
+    provenance_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    path_evidence_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class DetectionEvaluationRequest(BaseModel):
@@ -336,6 +357,9 @@ class DetectionEvaluationResponse(BaseModel):
     event_count: int = Field(ge=0)
     rule_count: int = Field(ge=0)
     matches: list[DetectionMatch] = Field(default_factory=list)
+    tenant_id: str | None = Field(default=None, max_length=128)
+    actor: str | None = Field(default=None, max_length=128)
+    rule_provenance: list[DetectionRuleProvenance] = Field(default_factory=list, max_length=128)
 
 
 class RegressionFixture(BaseModel):
@@ -372,6 +396,118 @@ class RegressionReport(BaseModel):
     false_positive_rate: float = Field(ge=0, le=100)
     cases: list[RegressionCaseResult] = Field(default_factory=list)
     generated_at: datetime
+    tenant_id: str | None = Field(default=None, max_length=128)
+    actor: str | None = Field(default=None, max_length=128)
+    rule_provenance: list[DetectionRuleProvenance] = Field(default_factory=list, max_length=128)
+
+
+class AttackPathEvidence(BaseModel):
+    """A bounded projection of analyzed attack-path evidence; raw graph payloads are not accepted here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(min_length=1, max_length=128)
+    path_id: str = Field(pattern=r"^path-[a-f0-9]{12}$")
+    risk_score: float = Field(ge=0, le=100)
+    risk_level: Literal["low", "medium", "high", "critical"]
+    technique_ids: list[str] = Field(default_factory=list, max_length=16)
+    asset_ids: list[str] = Field(default_factory=list, max_length=128)
+    summary: str = Field(min_length=1, max_length=2000)
+    captured_at: datetime
+
+    @field_validator("captured_at")
+    @classmethod
+    def evidence_timestamp_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("attack-path evidence timestamp must be timezone-aware")
+        return value
+
+
+class DetectionCoverageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    telemetry: list[TelemetryEvent] = Field(default_factory=list, max_length=10000)
+    rule_ids: list[str] = Field(default_factory=list, max_length=128)
+    attack_paths: list[AttackPathEvidence] = Field(default_factory=list, max_length=500)
+    dry_run: bool = True
+
+
+class DetectionCoverageObservation(BaseModel):
+    rule_id: str
+    rule_version: int = Field(ge=1)
+    technique_ids: list[str] = Field(default_factory=list)
+    detected: bool = False
+    evidence_count: int = Field(ge=0)
+    telemetry_event_ids: list[str] = Field(default_factory=list)
+    path_evidence_ids: list[str] = Field(default_factory=list)
+    rationale: str = Field(min_length=1, max_length=4000)
+    recommendation: str = ""
+
+
+class DetectionCoverageReport(BaseModel):
+    run_id: str
+    tenant_id: str
+    actor: str
+    evaluated_at: datetime
+    expected_rule_count: int = Field(ge=0)
+    detected_rule_count: int = Field(ge=0)
+    coverage_percent: float = Field(ge=0, le=100)
+    path_count: int = Field(ge=0)
+    covered_path_count: int = Field(ge=0)
+    path_coverage_percent: float = Field(ge=0, le=100)
+    observations: list[DetectionCoverageObservation] = Field(default_factory=list)
+    path_evidence_ids: list[str] = Field(default_factory=list)
+    rule_provenance: list[DetectionRuleProvenance] = Field(default_factory=list)
+    dry_run: bool
+    warnings: list[str] = Field(default_factory=list)
+
+
+class NormalizedRegressionFixture(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fixture_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    title: str = Field(min_length=3, max_length=255)
+    rule_id: str
+    expected_match: bool
+    telemetry: list[TelemetryEvent] = Field(min_length=1, max_length=10000)
+    attack_paths: list[AttackPathEvidence] = Field(default_factory=list, max_length=500)
+    description: str = Field(default="", max_length=2000)
+
+
+class NormalizedRegressionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fixtures: list[NormalizedRegressionFixture] = Field(min_length=1, max_length=256)
+    rule_ids: list[str] = Field(default_factory=list, max_length=128)
+    dry_run: bool = True
+
+
+class NormalizedRegressionCaseResult(BaseModel):
+    fixture_id: str
+    rule_id: str
+    expected_match: bool
+    actual_match: bool
+    passed: bool
+    telemetry_event_ids: list[str] = Field(default_factory=list)
+    path_evidence_ids: list[str] = Field(default_factory=list)
+    notes: str
+
+
+class NormalizedRegressionReport(BaseModel):
+    run_id: str
+    status: Literal["passed", "failed"]
+    tenant_id: str
+    actor: str
+    total_cases: int = Field(ge=0)
+    passed_cases: int = Field(ge=0)
+    failed_cases: int = Field(ge=0)
+    true_positive_rate: float = Field(ge=0, le=100)
+    false_positive_rate: float = Field(ge=0, le=100)
+    cases: list[NormalizedRegressionCaseResult] = Field(default_factory=list)
+    rule_provenance: list[DetectionRuleProvenance] = Field(default_factory=list)
+    generated_at: datetime
+    dry_run: bool
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ScenarioSpec(BaseModel):

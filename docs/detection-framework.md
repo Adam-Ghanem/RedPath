@@ -13,6 +13,7 @@ A rule is represented by `DetectionRule` in `backend/app/schemas/contracts.py` a
 | Field | Meaning |
 | --- | --- |
 | `rule_id` | Stable lower-case identifier used by evaluations and regression fixtures. |
+| `version` | Positive rule revision number included in evaluation provenance and reports. |
 | `technique_ids` | One or more ATT&CK technique identifiers covered by the rule. |
 | `event_sources` | Case-insensitive source allow-list; the current built-ins use `wazuh`. |
 | `conditions` | One to ten bounded field comparisons using `equals`, `contains`, `starts_with`, or `in`. |
@@ -36,9 +37,21 @@ Regression fixtures are positive or negative expectations over a rule and a boun
 
 The built-in suite covers a positive and negative Kerberoasting case, a positive AS-REP case, and a positive AD CS template-risk case. The built-in fixtures are synthetic and are intended to verify rule behavior, not to represent live attack traffic.
 
+## Normalized telemetry and evidence
+
+Read-only Wazuh ingestion projects source documents into `TelemetryEvent`, a bounded analyst record containing tenant ID, event ID, timestamp, severity, rule metadata, asset ID, ATT&CK technique IDs, summary, an allow-listed scalar `safe_fields` map, and a SHA-256 digest of the source document. The detection adapter consumes only this redacted projection. It does not pass raw Wazuh documents, commands, credentials, packet contents, or arbitrary nested fields to the evaluator or response.
+
+The normalized evaluator returns the server-selected tenant and actor context, rule version, deterministic rule-content SHA-256 provenance, matched telemetry event IDs, and optional attack-path evidence IDs. Attack-path evidence is accepted only as a bounded projection containing a stable `path-<12 hex>` identifier, tenant, risk level/score, technique IDs, asset IDs, summary, and timezone-aware capture time. Raw graph payloads are not accepted by the coverage or regression contracts. A path is linked to a rule only when its technique set intersects the rule’s technique set.
+
+## Deterministic coverage and regression reporting
+
+`POST /detections/coverage` calculates rule coverage as detected selected rules divided by selected rules, rounded to two decimal places. Path coverage is the number of linked path evidence IDs divided by supplied path evidence IDs. Rule ordering, event IDs, path IDs, provenance entries, and observation contents are sorted or derived deterministically; the run identifier and timestamps are execution metadata only.
+
+`POST /detections/regressions/normalized` accepts bounded normalized telemetry fixtures and optional bounded path evidence. Each case reports only expected/actual outcome, pass/fail state, telemetry event IDs, path evidence IDs, and a short note. It returns true-positive and false-positive rates, rule provenance, server-derived tenant and actor, dry-run status, and warnings. It never returns `safe_fields` or raw source payloads.
+
 ## API endpoints
 
-All endpoints are under `/api/v1` and record an audit event. Rule registration is process-scoped in this vertical slice; it does not deploy rules to Wazuh or persist them to a SIEM. Deployment approval and durable rule storage are integration points for the platform orchestration and governance modules.
+All endpoints are under `/api/v1` and record an audit event. Rule registration remains process-scoped; it does not deploy rules to Wazuh or persist them to a SIEM. Deployment approval and durable rule storage are integration points for platform orchestration and governance.
 
 | Method and path | Contract | Behavior |
 | --- | --- | --- |
@@ -46,8 +59,10 @@ All endpoints are under `/api/v1` and record an audit event. Rule registration i
 | `POST /detections/rules` | `DetectionRuleCreate` → `DetectionRule` | Registers a new rule in the current process. Duplicate IDs and unapproved production rules are rejected. |
 | `POST /detections/evaluate` | `DetectionEvaluationRequest` → `DetectionEvaluationResponse` | Evaluates events against all selected rules or all catalog rules when `rule_ids` is empty. |
 | `POST /detections/regressions/run` | `RegressionRunRequest` → `RegressionReport` | Runs supplied fixtures, or the built-in synthetic suite when `fixtures` is omitted. |
+| `POST /detections/coverage` | `DetectionCoverageRequest` → `DetectionCoverageReport` | Scores selected rules against normalized telemetry and bounded attack-path evidence. |
+| `POST /detections/regressions/normalized` | `NormalizedRegressionRequest` → `NormalizedRegressionReport` | Runs tenant-safe regression fixtures over normalized telemetry without returning raw payloads. |
 
-The current prototype’s router does not yet provide authentication and role middleware. Before these mutating or sensitive routes are exposed beyond an authorized lab deployment, they must be placed behind the project’s server-side authentication, tenant isolation, resource authorization, rate limiting, and audit policy. This module itself defaults to bounded inputs, read-only event evaluation, no external calls, and no arbitrary execution.
+Detection, telemetry, coverage, regression, evidence, and attack-path routes are placed behind the project’s server-side bearer authentication, `analyze` permission, rate limiting, tenant checks, and audit policy. The authenticated principal’s tenant and username are used for report context and audit actor values; request payloads cannot override either. The feature remains read-only with respect to external systems and honors the application’s dry-run default.
 
 ## Focused validation
 

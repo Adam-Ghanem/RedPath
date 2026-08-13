@@ -33,6 +33,12 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/integrity/audit` | Verify the chained JSONL audit log | Read-only integrity verification |
 | GET | `/api/v1/trends/risk` | Aggregate persisted risk and coverage by period | Derived from stored run records |
 | GET | `/api/v1/detection-tuning` | Return gap-driven rule-tuning queue | Recommendations only; no Wazuh mutation |
+| GET | `/api/v1/detections/rules` | List versioned declarative detection rules | Authenticated, tenant-aware read; no rule execution |
+| POST | `/api/v1/detections/rules` | Register a process-scoped defensive rule | Analyze permission; approval required for production status |
+| POST | `/api/v1/detections/evaluate` | Evaluate imported Wazuh-style events | Read-only, bounded conditions, audit logged |
+| POST | `/api/v1/detections/regressions/run` | Run legacy synthetic detection fixtures | Read-only, audit logged |
+| POST | `/api/v1/detections/coverage` | Score rules against normalized telemetry and path evidence | Analyze permission; tenant and actor derived server-side; dry-run safe |
+| POST | `/api/v1/detections/regressions/normalized` | Run bounded normalized-telemetry regression fixtures | Analyze permission; raw telemetry excluded from report; dry-run safe |
 | POST | `/api/v1/siem/telemetry/ingest` | Retrieve and persist redacted, tenant-scoped Wazuh projections | RBAC-protected read-only external query; bounded window; audit logged |
 | GET | `/api/v1/siem/telemetry` | Read redacted local telemetry projections | RBAC-protected; server-derived tenant predicate; audit logged |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
@@ -118,6 +124,14 @@ The report calculates coverage as detected expected techniques divided by expect
 ## SIEM/Wazuh telemetry ingestion
 
 The ingestion contract and operator guidance are documented in [`docs/siem-ingestion.md`](siem-ingestion.md). Both telemetry endpoints require authenticated bearer credentials: ingestion requires the `analyze` permission and readback requires `read`. The service derives the tenant from the authenticated session and rejects an ingestion payload for another tenant. The raw Wazuh document is never returned or stored; only a bounded normalized projection and a SHA-256 provenance digest are retained. The external adapter is limited to the configured Wazuh alerts search index and has no mutation methods.
+
+## Detection coverage and normalized regression reporting
+
+The detection coverage endpoint consumes the redacted `TelemetryEvent` projection produced by read-only Wazuh ingestion. It can also accept bounded attack-path evidence projections containing stable path IDs, risk summaries, technique IDs, and asset IDs. The API rejects cross-tenant telemetry or path evidence before evaluation and derives the tenant and actor from the authenticated bearer session.
+
+Coverage is deterministic: each selected rule contributes one expected unit, each rule with at least one correlated normalized match contributes one detected unit, and the score is the detected fraction rounded to two decimal places. Path coverage is the fraction of supplied path evidence IDs linked to a detected rule through both technique and compatible asset context. Responses contain rule version and SHA-256 provenance, normalized event IDs, path evidence IDs, rationale, recommendations, server-derived actor, dry-run status, and no raw Wazuh documents or safe-field values.
+
+The normalized regression endpoint accepts only bounded normalized telemetry fixtures and optional bounded path evidence. It reports expected and actual outcomes, pass/fail state, event IDs, path IDs, rule provenance, and true-/false-positive rates. Request payloads cannot override tenant or actor fields, and audit records capture counts and identifiers without raw payloads. These operations do not mutate Wazuh, the attack-path model, external networks, or credentials.
 
 ## Error semantics
 
