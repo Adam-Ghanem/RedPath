@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -10,6 +11,8 @@ from app.core.audit import AuditLogger
 from app.core.config import Settings
 from app.core.scope import ScopePolicy, ScopeViolation
 from app.db.models import create_session_factory
+from app.kernel.contracts import IntegrationAnalysisRequest, IntegrationContext, IntegrationContextRequest
+from app.kernel.service import IntegrationKernel
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
@@ -84,6 +87,10 @@ def build_router(settings: Settings) -> APIRouter:
     scope = ScopePolicy.from_strings(settings.allowed_cidr_list)
     recon_service = ReconService(scope, timeout_seconds=settings.recon_timeout_seconds)
     audit = AuditLogger(settings.audit_log_path)
+    integration_kernel = IntegrationKernel(
+        scope_validator=lambda targets: scope.validate_targets(list(targets)) if targets else None,
+        audit_recorder=audit.record,
+    )
     session_factory = create_session_factory(settings.database_url)
 
     @router.get("/health")
@@ -101,6 +108,42 @@ def build_router(settings: Settings) -> APIRouter:
     @router.get("/plugins")
     def plugins() -> list[dict]:
         return list_plugins()
+
+    @router.post("/integrations/{plugin_id}/plan")
+    def integration_plan(plugin_id: str, request: IntegrationContextRequest):
+        context = IntegrationContext(
+            tenant_id=request.tenant_id,
+            actor=request.actor,
+            request_id=request.request_id or str(uuid4()),
+            targets=request.targets,
+            dry_run=settings.dry_run or request.dry_run,
+        )
+        try:
+            return integration_kernel.plan(plugin_id, context)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ScopeViolation as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post("/integrations/{plugin_id}/analyze")
+    def integration_analyze(plugin_id: str, request: IntegrationAnalysisRequest):
+        context = IntegrationContext(
+            tenant_id=request.tenant_id,
+            actor=request.actor,
+            request_id=request.request_id or str(uuid4()),
+            targets=request.targets,
+            dry_run=settings.dry_run or request.dry_run,
+        )
+        try:
+            return integration_kernel.analyze(plugin_id, context, request.observations)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ScopeViolation as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.get("/scenarios", response_model=list[ScenarioSpec])
     def scenarios() -> list[ScenarioSpec]:
