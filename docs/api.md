@@ -24,6 +24,8 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/integrity/audit` | Verify the chained JSONL audit log | Read-only integrity verification |
 | GET | `/api/v1/trends/risk` | Aggregate persisted risk and coverage by period | Derived from stored run records |
 | GET | `/api/v1/detection-tuning` | Return gap-driven rule-tuning queue | Recommendations only; no Wazuh mutation |
+| POST | `/api/v1/siem/telemetry/ingest` | Retrieve and persist redacted, tenant-scoped Wazuh projections | Protected SIEM reader; read-only external query; bounded window; audit logged |
+| GET | `/api/v1/siem/telemetry` | Read redacted local telemetry projections | Protected SIEM reader; tenant predicate enforced; audit logged |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
 | POST | `/api/v1/purple/analyze` | Compare expected techniques against Wazuh-style alerts | Accepts imported evidence; no rule changes |
 | POST | `/api/v1/reports/pdf` | Generate a local PDF from findings and optional coverage | No external side effect |
@@ -87,6 +89,10 @@ A campaign is a bounded assessment context with an owner and scope snapshot. Evi
 ```
 
 The report calculates coverage as detected expected techniques divided by expected techniques. A gap includes the technique ID and a recommendation to tune rules and add a synthetic regression fixture. A future adapter can populate `alerts` from the Wazuh indexer query shown in the lab guide.
+
+## SIEM/Wazuh telemetry ingestion
+
+The AI-05 ingestion contract and operator guidance are documented in [`docs/siem-ingestion.md`](siem-ingestion.md). Both telemetry endpoints require a bearer token configured on the server and an `X-RedPath-Tenant` header that is present in the configured tenant allow-list. The raw Wazuh document is never returned or stored; only a bounded normalized projection and a SHA-256 provenance digest are retained. The external adapter is limited to the configured Wazuh alerts search index and has no mutation methods.
 
 ## Error semantics
 

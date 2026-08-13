@@ -9,10 +9,22 @@ import httpx
 class WazuhIndexerClient:
     """Read-only adapter for the Wazuh indexer alerts index."""
 
-    def __init__(self, base_url: str, username: str, password: str, verify_tls: bool = True) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        username: str,
+        password: str,
+        verify_tls: bool = True,
+        timeout_seconds: int = 20,
+    ) -> None:
+        if not base_url.startswith(("https://", "http://")):
+            raise ValueError("Wazuh indexer URL must include an HTTP(S) scheme")
+        if timeout_seconds < 1 or timeout_seconds > 120:
+            raise ValueError("Wazuh timeout must be between 1 and 120 seconds")
         self.base_url = base_url.rstrip("/")
         self.auth = (username, password)
         self.verify_tls = verify_tls
+        self.timeout_seconds = timeout_seconds
 
     async def search_alerts(
         self,
@@ -43,7 +55,7 @@ class WazuhIndexerClient:
             "query": {"bool": {"must": must}},
             "sort": [{"timestamp": {"order": "desc"}}],
         }
-        async with httpx.AsyncClient(verify=self.verify_tls, timeout=20) as client:
+        async with httpx.AsyncClient(verify=self.verify_tls, timeout=self.timeout_seconds) as client:
             response = await client.post(f"{self.base_url}/wazuh-alerts*/_search", auth=self.auth, json=body)
             response.raise_for_status()
             payload = response.json()
