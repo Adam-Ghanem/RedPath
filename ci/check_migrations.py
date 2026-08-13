@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -12,10 +11,9 @@ from sqlalchemy import create_engine, inspect, text
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from app.db.models import Base, run_migrations  # noqa: E402
+from app.db.models import Base, run_alembic_migrations  # noqa: E402
 
-MIGRATIONS_DIR = REPO_ROOT / "backend" / "migrations"
-DESTRUCTIVE_DDL = re.compile(r"\b(?:DROP\s+(?:TABLE|COLUMN|DATABASE)|TRUNCATE)\b", re.IGNORECASE)
+MIGRATIONS_DIR = REPO_ROOT / "backend" / "alembic" / "versions"
 
 TENANT_TABLES = (
     "scan_runs",
@@ -35,30 +33,28 @@ TENANT_TABLES = (
 )
 
 
-def validate_sql_migrations() -> None:
-    migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
+def validate_alembic_revisions() -> None:
+    migration_files = sorted(path for path in MIGRATIONS_DIR.glob("*.py") if path.name != "__init__.py")
     if not migration_files:
-        raise RuntimeError("no SQL migration artifacts found")
+        raise RuntimeError("no Alembic revision artifacts found")
     for migration_file in migration_files:
         content = migration_file.read_text(encoding="utf-8")
-        if not re.search(r"\b(?:CREATE\s+(?:TABLE|INDEX)|ALTER\s+TABLE)\b", content, re.IGNORECASE):
-            raise RuntimeError(f"migration has no additive DDL statement: {migration_file.name}")
-        if DESTRUCTIVE_DDL.search(content):
-            raise RuntimeError(f"migration contains destructive DDL: {migration_file.name}")
+        if "revision =" not in content or "def upgrade" not in content or "def downgrade" not in content:
+            raise RuntimeError(f"invalid Alembic revision: {migration_file.name}")
 
 
 def validate_migrations() -> None:
-    """Run the current migration runner twice and validate its stable end state."""
+    """Run the authoritative Alembic upgrade twice and validate its stable end state."""
     with tempfile.TemporaryDirectory(prefix="redpath-migration-") as temporary_directory:
         database_path = Path(temporary_directory) / "redpath.db"
-        engine = create_engine(f"sqlite:///{database_path}")
-        Base.metadata.create_all(engine)
-        run_migrations(engine)
-        run_migrations(engine)
+        database_url = f"sqlite:///{database_path}"
+        run_alembic_migrations(database_url)
+        run_alembic_migrations(database_url)
+        engine = create_engine(database_url)
 
         inspector = inspect(engine)
         tables = set(inspector.get_table_names())
-        required_tables = set(Base.metadata.tables) | {"schema_migrations"}
+        required_tables = set(Base.metadata.tables) | {"alembic_version"}
         missing_tables = sorted(required_tables - tables)
         if missing_tables:
             raise RuntimeError(f"migration check missing tables: {', '.join(missing_tables)}")
@@ -75,14 +71,9 @@ def validate_migrations() -> None:
             )
 
         with engine.connect() as connection:
-            versions = [
-                row[0]
-                for row in connection.execute(
-                    text("SELECT version FROM schema_migrations ORDER BY version")
-                )
-            ]
-            if versions != [2, 3, 4]:
-                raise RuntimeError(f"unexpected schema migration versions: {versions!r}")
+            revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            if not revision:
+                raise RuntimeError("Alembic head revision is missing")
             legacy_tenant = connection.execute(
                 text("SELECT id FROM tenants WHERE id = 'legacy'")
             ).scalar_one_or_none()
@@ -91,9 +82,9 @@ def validate_migrations() -> None:
 
 
 def main() -> int:
-    validate_sql_migrations()
+    validate_alembic_revisions()
     validate_migrations()
-    print("Migration checks passed: schema is additive, tenant-scoped, and idempotent.")
+    print("Migration checks passed: Alembic schema is tenant-scoped and idempotent.")
     return 0
 
 

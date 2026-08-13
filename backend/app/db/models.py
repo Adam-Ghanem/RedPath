@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -14,8 +16,6 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
-    inspect,
-    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -370,87 +370,13 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-_TENANT_TABLES = (
-    "scan_runs",
-    "assets",
-    "findings",
-    "graph_nodes",
-    "graph_edges",
-    "campaigns",
-    "campaign_run_links",
-    "evidence_items",
-    "remediation_items",
-    "risk_acceptances",
-    "case_governance_events",
-    "assessment_runs",
-    "purple_runs",
-    "detection_observations",
-    "audit_events",
-)
-
-
-def run_migrations(engine) -> None:
-    """Apply small, idempotent migrations without destructive data operations."""
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "CREATE TABLE IF NOT EXISTS schema_migrations "
-                "(version INTEGER PRIMARY KEY, applied_at VARCHAR(64) NOT NULL)"
-            )
-        )
-        legacy_tenant = connection.execute(text("SELECT id FROM tenants WHERE id = 'legacy'")).first()
-        if legacy_tenant is None:
-            connection.execute(
-                text(
-                    "INSERT INTO tenants (id, slug, name, is_active, created_at) "
-                    "VALUES ('legacy', 'legacy', 'Legacy imported records', 1, :created_at)"
-                ),
-                {"created_at": utcnow().isoformat()},
-            )
-        applied_v2 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 2")).first()
-        if not applied_v2:
-            inspector = inspect(connection)
-            for table_name in _TENANT_TABLES:
-                if table_name not in inspector.get_table_names():
-                    continue
-                columns = {column["name"] for column in inspector.get_columns(table_name)}
-                if "tenant_id" not in columns:
-                    connection.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN tenant_id VARCHAR(128)'))
-                connection.execute(
-                    text(f'UPDATE "{table_name}" SET tenant_id = :tenant_id WHERE tenant_id IS NULL'),  # nosec B608 - table_name is selected from the internal _TENANT_TABLES allowlist.
-                    {"tenant_id": "legacy"},
-                )
-            connection.execute(
-                text("INSERT INTO schema_migrations (version, applied_at) VALUES (2, :applied_at)"),
-                {"applied_at": utcnow().isoformat()},
-            )
-        applied_v3 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 3")).first()
-        if applied_v3:
-            return
-        inspector = inspect(connection)
-        if "telemetry_events" in inspector.get_table_names():
-            columns = {column["name"] for column in inspector.get_columns("telemetry_events")}
-            if "correlation_fields" not in columns:
-                connection.execute(
-                    text(
-                        "ALTER TABLE telemetry_events ADD COLUMN correlation_fields JSON "
-                        "NOT NULL DEFAULT '{}'"
-                    )
-                )
-            connection.execute(
-                text("INSERT INTO schema_migrations (version, applied_at) VALUES (3, :applied_at)"),
-                {"applied_at": utcnow().isoformat()},
-            )
-
-        applied_v4 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 4")).first()
-        if not applied_v4 and "evidence_items" in inspector.get_table_names():
-            evidence_columns = {column["name"] for column in inspector.get_columns("evidence_items")}
-            if "manifest_sha256" not in evidence_columns:
-                connection.execute(text("ALTER TABLE evidence_items ADD COLUMN manifest_sha256 VARCHAR(64)"))
-            connection.execute(
-                text("INSERT INTO schema_migrations (version, applied_at) VALUES (4, :applied_at)"),
-                {"applied_at": utcnow().isoformat()},
-            )
+def run_alembic_migrations(database_url: str) -> None:
+    """Upgrade the configured database through RedPath's sole Alembic revision chain."""
+    backend_root = Path(__file__).resolve().parents[2]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "head")
 
 
 def create_session_factory(database_url: str):
@@ -458,8 +384,7 @@ def create_session_factory(database_url: str):
         database_path = database_url.removeprefix("sqlite:///")
         if database_path not in {":memory:", ""}:
             Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+    run_alembic_migrations(database_url)
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     engine = create_engine(database_url, connect_args=connect_args)
-    Base.metadata.create_all(engine)
-    run_migrations(engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
