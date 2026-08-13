@@ -98,12 +98,15 @@ def bootstrap(client: TestClient) -> dict[str, str]:
 
 def test_every_api_route_is_explicitly_public_or_bearer_protected(tmp_path: Path) -> None:
     client = make_client(tmp_path)
-    paths = set(client.get("/openapi.json").json()["paths"])
+    openapi_paths = client.get("/openapi.json").json()["paths"]
+    paths = set(openapi_paths)
 
-    assert PUBLIC_PATHS | PROTECTED_PATHS == paths | {"/"}
+    assert PUBLIC_PATHS <= paths | {"/"}
     assert PUBLIC_PATHS.isdisjoint(PROTECTED_PATHS)
-    for path in PROTECTED_PATHS:
-        operation = next(iter(client.get("/openapi.json").json()["paths"][path].values()))
+    protected_paths = paths - PUBLIC_PATHS - {"/"}
+    assert PROTECTED_PATHS <= protected_paths
+    for path in protected_paths:
+        operation = next(iter(openapi_paths[path].values()))
         assert operation.get("security"), path
     assert client.get("/api/v1/scope").status_code == 401
     assert client.get("/api/v1/health").status_code == 200

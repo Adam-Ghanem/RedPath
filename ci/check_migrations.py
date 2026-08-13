@@ -41,8 +41,8 @@ def validate_sql_migrations() -> None:
         raise RuntimeError("no SQL migration artifacts found")
     for migration_file in migration_files:
         content = migration_file.read_text(encoding="utf-8")
-        if "CREATE TABLE" not in content.upper():
-            raise RuntimeError(f"migration has no CREATE TABLE statement: {migration_file.name}")
+        if not re.search(r"\b(?:CREATE\s+(?:TABLE|INDEX)|ALTER\s+TABLE)\b", content, re.IGNORECASE):
+            raise RuntimeError(f"migration has no additive DDL statement: {migration_file.name}")
         if DESTRUCTIVE_DDL.search(content):
             raise RuntimeError(f"migration contains destructive DDL: {migration_file.name}")
 
@@ -81,7 +81,7 @@ def validate_migrations() -> None:
                     text("SELECT version FROM schema_migrations ORDER BY version")
                 )
             ]
-            if versions != [2]:
+            if versions != [2, 3, 4]:
                 raise RuntimeError(f"unexpected schema migration versions: {versions!r}")
             legacy_tenant = connection.execute(
                 text("SELECT id FROM tenants WHERE id = 'legacy'")

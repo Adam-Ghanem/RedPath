@@ -238,5 +238,6 @@ def test_plan_route_keeps_actor_server_derived_and_errors_structured() -> None:
         headers=AUTH_HEADERS,
     )
     assert unknown.status_code == 404
-    assert unknown.json()["detail"]["code"] == "plugin_not_found"
-    assert "unknown.plugin" not in unknown.json()["detail"]["message"]
+    assert unknown.json()["detail"] == "Resource not found"
+    assert unknown.json()["error_code"] == "resource_not_found"
+    assert "unknown.plugin" not in unknown.text

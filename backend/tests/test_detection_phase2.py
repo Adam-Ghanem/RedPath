@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 
 from app.core.config import Settings
@@ -67,7 +68,12 @@ def test_normalize_wazuh_document_preserves_only_allowlisted_detection_scalars()
         },
         "tenant-a",
     )
-    assert event.safe_fields == {"event_id": "4769", "srcuser": "analyst01", "preauth_required": False}
+    assert event.safe_fields == {}
+    assert event.correlation_fields == {
+        "event_id": "4769",
+        "srcuser": hashlib.sha256(b"analyst01").hexdigest()[:16],
+        "preauth_required": False,
+    }
     assert "password" not in event.model_dump_json()
     assert "command" not in event.model_dump_json()
 
