@@ -6,8 +6,53 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
 
 
+class DiscoveryJobCreate(BaseModel):
+    """Request to enqueue a bounded, allow-listed discovery job."""
+
+    targets: list[IPvAnyAddress] = Field(min_length=1, max_length=64)
+    profile: Literal["safe", "service_inventory"] = "safe"
+    dry_run: bool = True
+
+
+class DiscoveryJobStatus(BaseModel):
+    """Persisted state for an asynchronous discovery job."""
+
+    job_id: str
+    tenant_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    profile: Literal["safe", "service_inventory"]
+    dry_run: bool
+    targets: list[str]
+    scan_id: str | None = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    progress_percent: int = Field(default=0, ge=0, le=100)
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class InventoryAsset(BaseModel):
+    """AI-01-compatible asset identity plus normalized discovery observations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = "1.0"
+    asset_id: str = Field(min_length=1, max_length=128)
+    tenant_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=255)
+    asset_type: Literal["host"] = "host"
+    ip: str
+    hostname: str | None = None
+    ports: list[int] = Field(default_factory=list)
+    services: list[str] = Field(default_factory=list)
+    scan_id: str
+    source: str = "recon"
+    discovered_at: datetime
+
+
 class ReconRequest(BaseModel):
-    targets: list[IPvAnyAddress] = Field(min_length=1)
+    targets: list[IPvAnyAddress] = Field(min_length=1, max_length=64)
     profile: Literal["safe", "service_inventory"] = "safe"
     dry_run: bool = True
 

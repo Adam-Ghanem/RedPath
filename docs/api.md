@@ -91,3 +91,32 @@ The report calculates coverage as detected expected techniques divided by expect
 ## Error semantics
 
 A target outside the allow-list returns HTTP 403. A malformed graph or unknown technique returns HTTP 422. The service returns structured FastAPI validation errors for malformed payloads. Audit events include a request operation, the effective dry-run mode, relevant identifiers, and a chained digest.
+
+## Asynchronous discovery jobs and inventory
+
+The AI-03 slice adds a durable, bounded worker boundary for discovery. These endpoints require a bearer token configured with `REDPATH_DISCOVERY_API_TOKEN` and a tenant value matching `REDPATH_DISCOVERY_TENANT_ID` (or the `X-RedPath-Tenant` header when it matches the server-side value). If the token is unset, the endpoints fail closed with HTTP 503 rather than exposing an unauthenticated discovery control plane.
+
+| Method | Endpoint | Purpose | Safety behavior |
+| --- | --- | --- | --- |
+| POST | `/api/v1/discovery/jobs` | Queue an allow-listed discovery job | Returns HTTP 202; bounded target list; server dry-run wins; fixed argv only; audit logged |
+| GET | `/api/v1/discovery/jobs` | List the current tenant’s recent jobs | Tenant-filtered local read; result payloads contain normalized observations only |
+| GET | `/api/v1/discovery/jobs/{job_id}` | Read one job lifecycle record | Returns 404 for another tenant or an unknown job |
+| GET | `/api/v1/inventory/assets` | Return normalized discovered assets | Tenant-filtered, bounded local read; no credentials or raw command output |
+
+A job transitions through `queued`, `running`, and `completed` or `failed`. The worker persists the scan record and normalizes each observation into the AI-01 versioned asset identity contract (`schema_version: "1.0"`). Repeated observations for the same tenant and IP update the stable inventory asset identifier rather than creating unbounded duplicates. Discovery is dry-run by default, and the existing safe profile uses a fixed command allow-list with no shell interpolation, exploit scripts, credential operations, or destructive actions.
+
+```json
+{
+  "targets": ["192.168.56.10"],
+  "profile": "safe",
+  "dry_run": true
+}
+```
+
+The response includes `job_id`, lifecycle status, progress, normalized targets, optional `scan_id`, and (after completion) a serialized `ReconResult`. The worker deliberately stores warnings and normalized port/service observations, not stdout/stderr or secrets. Operators should poll the status endpoint with a modest interval and use the inventory endpoint for the current tenant’s asset view.
+
+The database change is represented by `backend/migrations/001_ai03_discovery_jobs.sql`. The application bootstrap also creates the new table for local SQLite deployments, while production deployments should apply the migration through the platform’s migration runner before starting workers.
+
+## Security and operational limits
+
+The worker uses a small bounded thread pool (`REDPATH_RECON_MAX_WORKERS`, default `2` and capped at `4`), a per-command timeout (`REDPATH_RECON_TIMEOUT_SECONDS`, default `30`), a per-tenant submission rate limit (`REDPATH_DISCOVERY_MAX_JOBS_PER_MINUTE`, default `30`), and Pydantic validation limiting each request to 64 IP targets. The configured CIDR allow-list is checked before a job is persisted. Audit events record queue, rejection, completion, and failure metadata while excluding raw payloads. This slice uses a single token-bound configured tenant as a fail-closed bridge until the shared identity/RBAC module supplies the platform-wide authorization provider.

@@ -3,9 +3,10 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
+from app.api.security import build_discovery_authorizer
 from app.core.audit import AuditLogger
 from app.core.config import Settings
 from app.core.scope import ScopePolicy, ScopeViolation
@@ -22,6 +23,8 @@ from app.schemas.contracts import (
     CoverageScorecard,
     DetectionGapReport,
     DetectionTuningItem,
+    DiscoveryJobCreate,
+    DiscoveryJobStatus,
     EvidenceCreate,
     EvidenceManifest,
     EvidenceResponse,
@@ -31,6 +34,7 @@ from app.schemas.contracts import (
     GraphRequest,
     GraphResult,
     IntegrityVerification,
+    InventoryAsset,
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
@@ -47,6 +51,11 @@ from app.schemas.contracts import (
 )
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
+from app.services.discovery_jobs import (
+    DiscoveryJobNotFound,
+    DiscoveryJobService,
+    DiscoveryRateLimitExceeded,
+)
 from app.services.expert_ops import (
     campaign_export,
     campaign_timeline,
@@ -85,6 +94,14 @@ def build_router(settings: Settings) -> APIRouter:
     recon_service = ReconService(scope, timeout_seconds=settings.recon_timeout_seconds)
     audit = AuditLogger(settings.audit_log_path)
     session_factory = create_session_factory(settings.database_url)
+    discovery_jobs = DiscoveryJobService(
+        recon_service,
+        session_factory,
+        audit,
+        max_workers=settings.recon_max_workers,
+        max_jobs_per_minute=settings.discovery_max_jobs_per_minute,
+    )
+    authorize_discovery = build_discovery_authorizer(settings)
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
@@ -258,6 +275,54 @@ def build_router(settings: Settings) -> APIRouter:
     @router.get("/detection-tuning", response_model=list[DetectionTuningItem])
     def detection_tuning() -> list[DetectionTuningItem]:
         return detection_tuning_queue(session_factory)
+
+    @router.post("/discovery/jobs", response_model=DiscoveryJobStatus, status_code=202)
+    def discovery_job_create(
+        request: DiscoveryJobCreate,
+        tenant_id: str = Depends(authorize_discovery),
+    ) -> DiscoveryJobStatus:
+        requested_targets = [str(target) for target in request.targets]
+        effective_dry_run = settings.dry_run or request.dry_run
+        try:
+            return discovery_jobs.submit(tenant_id, requested_targets, request.profile, effective_dry_run)
+        except DiscoveryRateLimitExceeded as exc:
+            audit.record(
+                "discovery.job_rate_limited",
+                {"tenant_id": tenant_id, "target_count": len(requested_targets)},
+                actor="discovery-api",
+            )
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except ScopeViolation as exc:
+            audit.record(
+                "discovery.job_rejected",
+                {"tenant_id": tenant_id, "targets": requested_targets, "reason": str(exc)},
+                actor="discovery-api",
+            )
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @router.get("/discovery/jobs", response_model=list[DiscoveryJobStatus])
+    def discovery_job_list(
+        limit: int = 20,
+        tenant_id: str = Depends(authorize_discovery),
+    ) -> list[DiscoveryJobStatus]:
+        return discovery_jobs.list(tenant_id, limit)
+
+    @router.get("/discovery/jobs/{job_id}", response_model=DiscoveryJobStatus)
+    def discovery_job_get(
+        job_id: str,
+        tenant_id: str = Depends(authorize_discovery),
+    ) -> DiscoveryJobStatus:
+        try:
+            return discovery_jobs.get(tenant_id, job_id)
+        except DiscoveryJobNotFound as exc:
+            raise HTTPException(status_code=404, detail="Discovery job not found") from exc
+
+    @router.get("/inventory/assets", response_model=list[InventoryAsset])
+    def inventory_assets(
+        limit: int = 100,
+        tenant_id: str = Depends(authorize_discovery),
+    ) -> list[InventoryAsset]:
+        return discovery_jobs.inventory(tenant_id, limit)
 
     @router.post("/recon", response_model=ReconResult)
     def recon(request: ReconRequest) -> ReconResult:
