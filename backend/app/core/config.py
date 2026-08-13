@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     audit_log_path: str = "./data/audit.jsonl"
     wazuh_indexer_url: str = "https://wazuh-indexer.local:9200"
     wazuh_verify_tls: bool = True
+    pcap_max_upload_bytes: int = 50 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

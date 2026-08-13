@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.core.audit import AuditLogger
@@ -45,6 +45,7 @@ from app.schemas.contracts import (
     ScenarioSpec,
     TrendPoint,
 )
+from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
 from app.services.expert_ops import (
@@ -72,6 +73,7 @@ from app.services.governance import (
 )
 from app.services.graph_engine import analyze_attack_graph
 from app.services.mitre import all_techniques
+from app.services.pcap import PcapFormatError, get_pcap_analysis, list_pcap_analyses, register_pcap_analysis
 from app.services.purple import build_detection_gap_report
 from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
@@ -190,6 +192,69 @@ def build_router(settings: Settings) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         audit.record("evidence.registered", {"evidence_id": result.evidence_id, "sha256": result.sha256})
         return result
+
+    def require_pcap_access(role: str | None, tenant_id: str | None) -> str:
+        if role not in {"soc_analyst", "incident_commander"}:
+            raise HTTPException(status_code=401, detail="PCAP access requires an authenticated SOC role")
+        if not tenant_id or len(tenant_id) > 128:
+            raise HTTPException(status_code=400, detail="X-Tenant-ID is required and must be at most 128 characters")
+        return tenant_id
+
+    @router.post("/pcap/analyses", response_model=PcapAnalysisResponse, status_code=201)
+    async def pcap_analysis_create(
+        file: UploadFile = File(...),  # noqa: B008
+        campaign_id: str | None = Form(default=None),
+        x_redpath_role: str | None = Header(default=None, alias="X-RedPath-Role"),
+        x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    ) -> PcapAnalysisResponse:
+        tenant_id = require_pcap_access(x_redpath_role, x_tenant_id)
+        file_name = Path(file.filename or "").name
+        if not file_name or file_name != (file.filename or "") or len(file_name) > 255:
+            raise HTTPException(status_code=400, detail="file name must be a single safe path component")
+        if not file_name.lower().endswith((".pcap", ".pcapng")):
+            raise HTTPException(status_code=415, detail="only .pcap and .pcapng evidence is accepted")
+        data = await file.read(settings.pcap_max_upload_bytes + 1)
+        if len(data) > settings.pcap_max_upload_bytes:
+            raise HTTPException(status_code=413, detail="PCAP evidence exceeds the configured upload limit")
+        try:
+            result = register_pcap_analysis(data, file_name, tenant_id, campaign_id, session_factory)
+        except PcapFormatError as exc:
+            audit.record("pcap.rejected", {"tenant_id": tenant_id, "file_name": file_name, "reason": str(exc)})
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "pcap.analyzed",
+            {
+                "analysis_id": result.analysis_id,
+                "evidence_id": result.evidence_id,
+                "tenant_id": tenant_id,
+                "sha256": result.sha256,
+                "packet_count": result.packet_count,
+            },
+        )
+        return result
+
+    @router.get("/pcap/analyses", response_model=list[PcapAnalysisSummary])
+    def pcap_analyses(
+        limit: int = 20,
+        x_redpath_role: str | None = Header(default=None, alias="X-RedPath-Role"),
+        x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    ) -> list[PcapAnalysisSummary]:
+        tenant_id = require_pcap_access(x_redpath_role, x_tenant_id)
+        return list_pcap_analyses(tenant_id, session_factory, limit)
+
+    @router.get("/pcap/analyses/{analysis_id}", response_model=PcapAnalysisResponse)
+    def pcap_analysis_detail(
+        analysis_id: str,
+        x_redpath_role: str | None = Header(default=None, alias="X-RedPath-Role"),
+        x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    ) -> PcapAnalysisResponse:
+        tenant_id = require_pcap_access(x_redpath_role, x_tenant_id)
+        try:
+            return get_pcap_analysis(analysis_id, tenant_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/remediations", response_model=list[RemediationResponse])
     def remediations(campaign_id: str | None = None) -> list[RemediationResponse]:

@@ -27,6 +27,9 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
 | POST | `/api/v1/purple/analyze` | Compare expected techniques against Wazuh-style alerts | Accepts imported evidence; no rule changes |
 | POST | `/api/v1/reports/pdf` | Generate a local PDF from findings and optional coverage | No external side effect |
+| POST | `/api/v1/pcap/analyses` | Analyze one offline PCAP or PCAP-NG upload | Role-gated, tenant-scoped, bounded upload; no raw bytes persisted |
+| GET | `/api/v1/pcap/analyses` | List normalized PCAP analyses for a tenant | Role-gated, tenant-filtered local read |
+| GET | `/api/v1/pcap/analyses/{analysis_id}` | Retrieve one normalized PCAP analysis | Role-gated; cross-tenant IDs return 404 |
 
 ## Recon request
 
@@ -73,6 +76,10 @@ The scenario response combines findings, coverage, detection gaps, recommendatio
 ## Expert operations workflow
 
 A campaign is a bounded assessment context with an owner and scope snapshot. Evidence registration requires a source, evidence type, title, SHA-256 digest, and optional run/technique links. Remediation records add ownership, priority, due date, and lifecycle status. Trend points aggregate stored run records by period, while detection-tuning items convert recurring technique gaps into rule intent, event-source, and regression-fixture recommendations. The audit endpoint recomputes each chained digest and identifies the first invalid event. The export endpoint creates a deterministic JSON package with campaign, timeline, evidence, remediation, trend, and tuning sections plus a manifest digest. These operations are metadata and evidence workflows only; RedPath does not modify AD, Wazuh, or external lab systems.
+
+## Offline PCAP forensics
+
+The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations in memory, register the digest in the existing evidence workflow, and persist only normalized metadata. The upload is role-gated with `X-RedPath-Role` (`soc_analyst` or `incident_commander`) and tenant-scoped with `X-Tenant-ID`; see [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, and parser coverage.
 
 ## Purple-team request
 
