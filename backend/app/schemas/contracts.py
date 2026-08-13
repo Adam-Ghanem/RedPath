@@ -55,6 +55,9 @@ class AttackNode(BaseModel):
     kind: Literal["asset", "identity", "finding", "privilege"]
     criticality: float = Field(default=0.0, ge=0, le=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    zone: Literal["on_prem", "cloud", "hybrid", "unknown"] = "unknown"
+    is_entry_point: bool = False
+    is_crown_jewel: bool = False
 
 
 class AttackEdge(BaseModel):
@@ -63,6 +66,101 @@ class AttackEdge(BaseModel):
     technique_id: str | None = None
     weight: float = Field(default=1.0, gt=0)
     rationale: str = ""
+    category: Literal[
+        "credential_theft",
+        "lateral_movement",
+        "privilege_escalation",
+        "persistence",
+        "cloud_privilege_abuse",
+        "other",
+    ] = "other"
+    likelihood: float = Field(default=5.0, ge=0, le=10)
+    impact: float = Field(default=5.0, ge=0, le=10)
+    stealth: float = Field(default=5.0, ge=0, le=10)
+    prerequisites: list[str] = Field(default_factory=list)
+    mitre_techniques: list[str] = Field(default_factory=list)
+    hardening_action: str = "Review and harden the control represented by this edge."
+    estimated_effort_hours: int = Field(default=4, ge=1, le=10_000)
+    hybrid: bool = False
+
+
+class RiskFactor(BaseModel):
+    dimension: Literal["likelihood", "impact", "stealth"]
+    score: float = Field(ge=0, le=10)
+    weight: float = Field(ge=0, le=1)
+    weighted_contribution: float = Field(ge=0, le=10)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class RiskExplanation(BaseModel):
+    summary: str = Field(min_length=1, max_length=2000)
+    factors: list[RiskFactor] = Field(min_length=1)
+    assumptions: list[str] = Field(default_factory=list)
+    mitigation: list[str] = Field(default_factory=list)
+
+
+class RankedAttackPath(BaseModel):
+    path_id: str
+    hops: list[str] = Field(min_length=2)
+    edges: list[AttackEdge] = Field(min_length=1)
+    category: str
+    composite_score: float = Field(ge=0, le=10)
+    risk_score: float = Field(ge=0, le=100)
+    risk_level: Literal["low", "medium", "high", "critical"]
+    likelihood: float = Field(ge=0, le=10)
+    impact: float = Field(ge=0, le=10)
+    stealth: float = Field(ge=0, le=10)
+    mitre_techniques: list[str] = Field(default_factory=list)
+    prerequisites: list[str] = Field(default_factory=list)
+    is_hybrid: bool = False
+    explanation: RiskExplanation
+
+
+class ChokePoint(BaseModel):
+    node_id: str
+    label: str
+    paths_blocked: int = Field(ge=1)
+    path_ids: list[str] = Field(min_length=1)
+    priority_class: Literal["P0", "P1", "P2", "P3"]
+    hardening_action: str = Field(min_length=1, max_length=2000)
+    estimated_effort_hours: int = Field(ge=1, le=10_000)
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class GraphSummary(BaseModel):
+    node_count: int = Field(ge=0)
+    edge_count: int = Field(ge=0)
+    entry_point_count: int = Field(ge=0)
+    crown_jewel_count: int = Field(ge=0)
+    viable_path_count: int = Field(ge=0)
+    critical_path_count: int = Field(ge=0)
+    hybrid_path_count: int = Field(ge=0)
+    truncated: bool = False
+
+
+class AttackPathAnalysisRequest(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    tenant_id: str = Field(min_length=1, max_length=128)
+    nodes: list[AttackNode] = Field(min_length=1, max_length=5000)
+    edges: list[AttackEdge] = Field(default_factory=list, max_length=20_000)
+    entry_point_ids: list[str] = Field(default_factory=list, max_length=100)
+    crown_jewel_ids: list[str] = Field(default_factory=list, max_length=100)
+    max_hops: int = Field(default=8, ge=1, le=12)
+    max_paths: int = Field(default=100, ge=1, le=500)
+    critical_threshold: float = Field(default=7.0, ge=0, le=10)
+
+
+class AttackPathAnalysisResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    tenant_id: str
+    graph_summary: GraphSummary
+    entry_points: list[str]
+    crown_jewel_nodes: list[str]
+    ranked_paths: list[RankedAttackPath]
+    choke_points: list[ChokePoint]
+    cloud_paths: list[str]
+    unreachable_crown_jewels: list[str]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class GraphRequest(BaseModel):

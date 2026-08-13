@@ -3,16 +3,19 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from app.core.audit import AuditLogger
+from app.core.authz import Principal, authorize_tenant, require_authenticated_analyst
 from app.core.config import Settings
 from app.core.scope import ScopePolicy, ScopeViolation
 from app.db.models import create_session_factory
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
+    AttackPathAnalysisRequest,
+    AttackPathAnalysisResponse,
     CampaignCreate,
     CampaignExport,
     CampaignResponse,
@@ -46,6 +49,7 @@ from app.schemas.contracts import (
     TrendPoint,
 )
 from app.services.ad_detection import detect_ad_findings
+from app.services.attack_path_risk import analyze_attack_path_risk
 from app.services.correlation import correlate_findings
 from app.services.expert_ops import (
     campaign_export,
@@ -77,6 +81,8 @@ from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
 from app.services.scenario_runner import execute_scenario, list_run_summaries
 from app.services.scenarios import list_scenarios
+
+attack_path_principal = Depends(require_authenticated_analyst)
 
 
 def build_router(settings: Settings) -> APIRouter:
@@ -301,6 +307,28 @@ def build_router(settings: Settings) -> APIRouter:
         audit.record(
             "graph.analyzed",
             {"source": request.source_node, "target": request.target_node, "node_count": len(request.nodes)},
+        )
+        return result
+
+    @router.post("/attack-paths/analyze", response_model=AttackPathAnalysisResponse)
+    def attack_paths_analyze(
+        request: AttackPathAnalysisRequest,
+        principal: Principal = attack_path_principal,
+    ) -> AttackPathAnalysisResponse:
+        authorize_tenant(principal, request.tenant_id)
+        try:
+            result = analyze_attack_path_risk(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        audit.record(
+            "attack_paths.analyzed",
+            {
+                "tenant_id": request.tenant_id,
+                "node_count": result.graph_summary.node_count,
+                "edge_count": result.graph_summary.edge_count,
+                "path_count": result.graph_summary.viable_path_count,
+                "critical_path_count": result.graph_summary.critical_path_count,
+            },
         )
         return result
 
