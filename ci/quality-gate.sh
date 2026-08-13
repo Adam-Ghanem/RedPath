@@ -22,6 +22,13 @@ printf '%s\n' '== Frontend: tests, typecheck, build =='
   npm run build
 )
 
+printf '%s\n' '== Migrations and documentation consistency =='
+(
+  cd "$repo_root"
+  PYTHONPATH=backend python ci/check_migrations.py
+  PYTHONPATH=backend python ci/check_docs.py
+)
+
 printf '%s\n' '== Repository: whitespace, compose, secret patterns =='
 (
   cd "$repo_root"

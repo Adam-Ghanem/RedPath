@@ -42,6 +42,23 @@ Demo fixtures must remain synthetic. Do not submit customer data, credentials, p
 | ATT&CK mappings | Include the technique ID, a brief rationale, and a link to the relevant official entry. |
 | Pull requests | Describe the security value, validation performed, and any visual or documentation updates. |
 
+## Release-quality verification
+
+Before opening a pull request, run the deterministic repository gate from the repository root:
+
+```bash
+./ci/quality-gate.sh
+```
+
+If Docker is unavailable locally, run the non-container release checks and record the limitation rather than weakening the hosted gate:
+
+```bash
+PYTHONPATH=backend python ci/check_migrations.py
+PYTHONPATH=backend python ci/check_docs.py
+```
+
+Database changes must use the existing migration-managed process, preserve tenant predicates and audit integrity, and remain additive unless a separately reviewed release plan says otherwise. Documentation changes must keep local links, public API references, and user-facing naming consistent.
+
 ## Pull requests
 
 Before opening a pull request, run the frontend checks shown above and update the README, screenshots, or scenario documentation when a user-visible behavior changes. Use a concise title in the form `feat:`, `fix:`, `docs:`, `test:`, or `chore:`. Reviewers will prioritize clarity, safety, determinism, and evidence-backed product behavior over feature volume.
