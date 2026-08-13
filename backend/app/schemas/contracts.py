@@ -165,11 +165,11 @@ class ScenarioRunResponse(AssessmentRunSummary):
 class CampaignCreate(BaseModel):
     name: str = Field(min_length=3, max_length=255)
     objective: str = Field(min_length=10, max_length=2000)
-    owner: str = Field(default="security-team", min_length=2, max_length=128)
     scope_snapshot: list[str] = Field(default_factory=list)
 
 
 class CampaignResponse(CampaignCreate):
+    owner: str
     campaign_id: str
     status: str
     created_at: datetime
@@ -197,7 +197,6 @@ class EvidenceResponse(EvidenceCreate):
 
 class EvidenceReviewUpdate(BaseModel):
     review_status: Literal["unreviewed", "in_review", "accepted", "rejected"]
-    reviewer: str = Field(min_length=2, max_length=128)
     notes: str = Field(default="", max_length=4000)
 
 
@@ -220,7 +219,6 @@ class RemediationResponse(RemediationCreate):
 
 class RemediationLifecycleUpdate(BaseModel):
     status: Literal["open", "in_progress", "blocked", "resolved", "closed"]
-    actor: str = Field(min_length=2, max_length=128)
     note: str = Field(default="", max_length=2000)
 
 
@@ -230,11 +228,11 @@ class RiskAcceptanceCreate(BaseModel):
     technique_id: str | None = None
     finding_title: str = Field(min_length=3, max_length=255)
     rationale: str = Field(min_length=20, max_length=4000)
-    approver: str = Field(min_length=2, max_length=128)
     expires_on: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class RiskAcceptanceResponse(RiskAcceptanceCreate):
+    approver: str
     acceptance_id: str
     status: Literal["active", "expired", "revoked"]
     created_at: datetime

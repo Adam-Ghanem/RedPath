@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     metrics_enabled: bool = True
     release: str = "dev"
+    auth_bootstrap_token: str = ""
+    rate_limit_requests_per_minute: int = 120
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

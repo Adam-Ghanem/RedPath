@@ -4,7 +4,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    create_engine,
+    inspect,
+    text,
+    update,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 
@@ -16,10 +31,57 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    username: Mapped[str] = mapped_column(String(128), index=True)
+    password_hash: Mapped[str] = mapped_column(String(512))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    role: Mapped[str] = mapped_column(String(64), index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    session_version: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ScanRun(Base):
     __tablename__ = "scan_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     mode: Mapped[str] = mapped_column(String(32), default="recon")
     dry_run: Mapped[bool] = mapped_column(default=True)
     targets: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -32,6 +94,7 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     scan_id: Mapped[str] = mapped_column(ForeignKey("scan_runs.id"), index=True)
     ip: Mapped[str] = mapped_column(String(64), index=True)
     hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -45,6 +108,7 @@ class Finding(Base):
     __tablename__ = "findings"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(String(16), index=True)
@@ -60,6 +124,7 @@ class GraphNode(Base):
     __tablename__ = "graph_nodes"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     label: Mapped[str] = mapped_column(String(255))
     kind: Mapped[str] = mapped_column(String(32))
     criticality: Mapped[float] = mapped_column(Float, default=0.0)
@@ -70,6 +135,7 @@ class GraphEdge(Base):
     __tablename__ = "graph_edges"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     source: Mapped[str] = mapped_column(String(128), index=True)
     target: Mapped[str] = mapped_column(String(128), index=True)
     technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -81,6 +147,7 @@ class Campaign(Base):
     __tablename__ = "campaigns"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     name: Mapped[str] = mapped_column(String(255))
     objective: Mapped[str] = mapped_column(Text)
     owner: Mapped[str] = mapped_column(String(128), default="security-team")
@@ -94,6 +161,7 @@ class CampaignRunLink(Base):
     __tablename__ = "campaign_run_links"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("assessment_runs.id"), index=True)
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -103,6 +171,7 @@ class EvidenceItem(Base):
     __tablename__ = "evidence_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("assessment_runs.id"), nullable=True, index=True)
     evidence_type: Mapped[str] = mapped_column(String(64))
@@ -121,6 +190,7 @@ class RemediationItem(Base):
     __tablename__ = "remediation_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
     finding_title: Mapped[str] = mapped_column(String(255))
     technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
@@ -137,6 +207,7 @@ class RiskAcceptance(Base):
     __tablename__ = "risk_acceptances"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
     remediation_id: Mapped[str | None] = mapped_column(ForeignKey("remediation_items.id"), nullable=True, index=True)
     technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
@@ -153,6 +224,7 @@ class AssessmentRun(Base):
     __tablename__ = "assessment_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     scenario_id: Mapped[str] = mapped_column(String(128), index=True)
     status: Mapped[str] = mapped_column(String(32), default="completed")
     dry_run: Mapped[bool] = mapped_column(default=True)
@@ -170,6 +242,7 @@ class PurpleRun(Base):
     __tablename__ = "purple_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     technique_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     dry_run: Mapped[bool] = mapped_column(default=True)
     coverage_percent: Mapped[float] = mapped_column(Float, default=0.0)
@@ -180,6 +253,7 @@ class DetectionObservation(Base):
     __tablename__ = "detection_observations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     purple_run_id: Mapped[str] = mapped_column(ForeignKey("purple_runs.id"), index=True)
     technique_id: Mapped[str] = mapped_column(String(32), index=True)
     detected: Mapped[bool] = mapped_column(default=False)
@@ -192,11 +266,67 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)
     operation: Mapped[str] = mapped_column(String(128), index=True)
     actor: Mapped[str] = mapped_column(String(128), default="api")
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     digest: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+_TENANT_TABLES = (
+    "scan_runs",
+    "assets",
+    "findings",
+    "graph_nodes",
+    "graph_edges",
+    "campaigns",
+    "campaign_run_links",
+    "evidence_items",
+    "remediation_items",
+    "risk_acceptances",
+    "assessment_runs",
+    "purple_runs",
+    "detection_observations",
+    "audit_events",
+)
+
+
+def run_migrations(engine) -> None:
+    """Apply small, idempotent migrations without destructive data operations."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(version INTEGER PRIMARY KEY, applied_at VARCHAR(64) NOT NULL)"
+            )
+        )
+        legacy_tenant = connection.execute(text("SELECT id FROM tenants WHERE id = 'legacy'")).first()
+        if legacy_tenant is None:
+            connection.execute(
+                text(
+                    "INSERT INTO tenants (id, slug, name, is_active, created_at) "
+                    "VALUES ('legacy', 'legacy', 'Legacy imported records', 1, :created_at)"
+                ),
+                {"created_at": utcnow().isoformat()},
+            )
+        applied = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 2")).first()
+        if applied:
+            return
+        inspector = inspect(connection)
+        metadata = MetaData()
+        for table_name in _TENANT_TABLES:
+            if table_name not in inspector.get_table_names():
+                continue
+            columns = {column["name"] for column in inspector.get_columns(table_name)}
+            if "tenant_id" not in columns:
+                connection.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN tenant_id VARCHAR(128)'))
+            table = Table(table_name, metadata, autoload_with=connection)
+            connection.execute(update(table).where(table.c.tenant_id.is_(None)).values(tenant_id="legacy"))
+        connection.execute(
+            text("INSERT INTO schema_migrations (version, applied_at) VALUES (2, :applied_at)"),
+            {"applied_at": utcnow().isoformat()},
+        )
 
 
 def create_session_factory(database_url: str):
@@ -207,4 +337,5 @@ def create_session_factory(database_url: str):
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     engine = create_engine(database_url, connect_args=connect_args)
     Base.metadata.create_all(engine)
+    run_migrations(engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)

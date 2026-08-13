@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
+from app.core.request_context import current_tenant_id
 from app.db.models import AssessmentRun
 from app.schemas.contracts import (
     AssessmentRunSummary,
@@ -36,6 +37,7 @@ def execute_scenario(request: ScenarioRunRequest, session_factory: SessionFactor
         session.add(
             AssessmentRun(
                 id=run_id,
+                tenant_id=current_tenant_id(),
                 scenario_id=scenario.scenario_id,
                 status="completed",
                 dry_run=request.dry_run,
@@ -69,7 +71,13 @@ def execute_scenario(request: ScenarioRunRequest, session_factory: SessionFactor
 
 def list_run_summaries(session_factory: SessionFactory, limit: int = 20) -> list[AssessmentRunSummary]:
     with session_factory() as session:
-        rows = session.query(AssessmentRun).order_by(AssessmentRun.created_at.desc()).limit(limit).all()
+        rows = (
+            session.query(AssessmentRun)
+            .filter_by(tenant_id=current_tenant_id())
+            .order_by(AssessmentRun.created_at.desc())
+            .limit(limit)
+            .all()
+        )
     return [
         AssessmentRunSummary(
             run_id=row.id,

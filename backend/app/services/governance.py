@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from uuid import uuid4
 
+from app.core.request_context import current_actor, current_tenant_id
 from app.db.models import AssessmentRun, Campaign, EvidenceItem, RemediationItem, RiskAcceptance, utcnow
 from app.schemas.contracts import (
     CoverageScorecard,
@@ -43,12 +44,13 @@ def review_evidence(
     request: EvidenceReviewUpdate,
     session_factory: SessionFactory,
 ) -> EvidenceResponse:
+    tenant_id = current_tenant_id()
     with session_factory() as session:
-        row = session.get(EvidenceItem, evidence_id)
+        row = session.query(EvidenceItem).filter_by(id=evidence_id, tenant_id=tenant_id).first()
         if row is None:
             raise KeyError(f"Unknown evidence: {evidence_id}")
         row.review_status = request.review_status
-        row.reviewer = request.reviewer
+        row.reviewer = current_actor()
         row.reviewed_at = datetime.now(timezone.utc)
         if request.notes:
             row.notes = request.notes
@@ -62,14 +64,15 @@ def update_remediation(
     request: RemediationLifecycleUpdate,
     session_factory: SessionFactory,
 ) -> RemediationResponse:
+    tenant_id = current_tenant_id()
     with session_factory() as session:
-        row = session.get(RemediationItem, remediation_id)
+        row = session.query(RemediationItem).filter_by(id=remediation_id, tenant_id=tenant_id).first()
         if row is None:
             raise KeyError(f"Unknown remediation: {remediation_id}")
         row.status = request.status
         row.updated_at = utcnow()
         if request.note:
-            row.recommendation = f"{row.recommendation}\nLifecycle note ({request.actor}): {request.note}"
+            row.recommendation = f"{row.recommendation}\nLifecycle note ({current_actor()}): {request.note}"
         session.commit()
         session.refresh(row)
     return RemediationResponse(
@@ -113,24 +116,32 @@ def _acceptance_response(row: RiskAcceptance) -> RiskAcceptanceResponse:
 
 
 def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: SessionFactory) -> RiskAcceptanceResponse:
+    tenant_id = current_tenant_id()
     now = utcnow()
     row = RiskAcceptance(
         id=str(uuid4()),
+        tenant_id=tenant_id,
         campaign_id=request.campaign_id,
         remediation_id=request.remediation_id,
         technique_id=request.technique_id,
         finding_title=request.finding_title,
         rationale=request.rationale,
-        approver=request.approver,
+        approver=current_actor(),
         expires_on=request.expires_on,
         status="active",
         created_at=now,
         updated_at=now,
     )
     with session_factory() as session:
-        if request.campaign_id and session.get(Campaign, request.campaign_id) is None:
+        if (
+            request.campaign_id
+            and session.query(Campaign).filter_by(id=request.campaign_id, tenant_id=tenant_id).first() is None
+        ):
             raise KeyError(f"Unknown campaign: {request.campaign_id}")
-        if request.remediation_id and session.get(RemediationItem, request.remediation_id) is None:
+        if (
+            request.remediation_id
+            and session.query(RemediationItem).filter_by(id=request.remediation_id, tenant_id=tenant_id).first() is None
+        ):
             raise KeyError(f"Unknown remediation: {request.remediation_id}")
         session.add(row)
         session.commit()
@@ -139,15 +150,19 @@ def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: Sessi
 
 
 def list_risk_acceptances(session_factory: SessionFactory) -> list[RiskAcceptanceResponse]:
+    tenant_id = current_tenant_id()
     with session_factory() as session:
-        rows = session.query(RiskAcceptance).order_by(RiskAcceptance.expires_on.asc()).all()
+        rows = (
+            session.query(RiskAcceptance).filter_by(tenant_id=tenant_id).order_by(RiskAcceptance.expires_on.asc()).all()
+        )
     return [_acceptance_response(row) for row in rows]
 
 
 def coverage_scorecard(session_factory: SessionFactory) -> CoverageScorecard:
+    tenant_id = current_tenant_id()
     with session_factory() as session:
-        runs = session.query(AssessmentRun).all()
-        acceptances = session.query(RiskAcceptance).all()
+        runs = session.query(AssessmentRun).filter_by(tenant_id=tenant_id).all()
+        acceptances = session.query(RiskAcceptance).filter_by(tenant_id=tenant_id).all()
     expected: set[str] = set()
     gaps: set[str] = set()
     for run in runs:
@@ -158,9 +173,7 @@ def coverage_scorecard(session_factory: SessionFactory) -> CoverageScorecard:
     expected.update(gaps)
     detected = expected - gaps
     active_acceptances = {
-        row.technique_id
-        for row in acceptances
-        if row.technique_id and _acceptance_status(row) == "active"
+        row.technique_id for row in acceptances if row.technique_id and _acceptance_status(row) == "active"
     }
     open_gaps = len(gaps - active_acceptances)
     coverage = (len(detected) / len(expected) * 100) if expected else 0.0
@@ -177,18 +190,19 @@ def coverage_scorecard(session_factory: SessionFactory) -> CoverageScorecard:
 
 
 def executive_kpis(session_factory: SessionFactory) -> ExecutiveKpis:
+    tenant_id = current_tenant_id()
     with session_factory() as session:
-        runs = session.query(AssessmentRun).order_by(AssessmentRun.created_at.desc()).all()
-        remediations = session.query(RemediationItem).all()
-        evidence = session.query(EvidenceItem).all()
-        acceptances = session.query(RiskAcceptance).all()
+        runs = (
+            session.query(AssessmentRun).filter_by(tenant_id=tenant_id).order_by(AssessmentRun.created_at.desc()).all()
+        )
+        remediations = session.query(RemediationItem).filter_by(tenant_id=tenant_id).all()
+        evidence = session.query(EvidenceItem).filter_by(tenant_id=tenant_id).all()
+        acceptances = session.query(RiskAcceptance).filter_by(tenant_id=tenant_id).all()
     scorecard = coverage_scorecard(session_factory)
     latest_risk = runs[0].risk_score if runs else 0.0
     overdue = sum(1 for item in remediation_sla(session_factory) if item.state == "overdue")
     open_critical = sum(
-        1
-        for item in remediations
-        if item.priority == "critical" and item.status not in {"closed", "resolved"}
+        1 for item in remediations if item.priority == "critical" and item.status not in {"closed", "resolved"}
     )
     expiring_cutoff = date.today() + timedelta(days=30)
     expiring = 0

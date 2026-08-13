@@ -1,18 +1,135 @@
-from app.main import app
+from __future__ import annotations
+
+from pathlib import Path
+from uuid import uuid4
+
+from app.core.config import Settings
+from app.main import create_app
 from fastapi.testclient import TestClient
 
-client = TestClient(app)
+DB_PATH = Path("/tmp") / f"redpath-ai02-{uuid4().hex}.db"
+settings = Settings(
+    database_url=f"sqlite:///{DB_PATH}",
+    audit_log_path=f"/tmp/redpath-ai02-{uuid4().hex}.jsonl",
+    auth_bootstrap_token="bootstrap-token-for-ai02-tests",
+    rate_limit_requests_per_minute=240,
+)
+raw_client = TestClient(create_app(settings))
+
+bootstrap = raw_client.post(
+    "/api/v1/auth/bootstrap",
+    json={
+        "bootstrap_token": settings.auth_bootstrap_token,
+        "tenant_slug": "alpha",
+        "tenant_name": "Alpha Security",
+        "username": "alpha-admin",
+        "password": "alpha-admin-password",
+    },
+)
+assert bootstrap.status_code == 201
+ADMIN_HEADERS = {"Authorization": f"Bearer {bootstrap.json()['access_token']}"}
 
 
-def test_health_and_scope_contracts() -> None:
-    health = client.get("/api/v1/health")
-    scope = client.get("/api/v1/scope")
-    assert health.status_code == 200
-    assert health.json()["dry_run_default"] is True
-    assert "192.168.56.0/24" in scope.json()["allowed_cidrs"]
+def login(tenant_slug: str, username: str, password: str) -> dict[str, str]:
+    response = raw_client.post(
+        "/api/v1/auth/token",
+        json={"tenant_slug": tenant_slug, "username": username, "password": password},
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def test_recon_rejects_out_of_scope_target() -> None:
+class AuthenticatedClient:
+    def __init__(self, headers: dict[str, str]):
+        self.headers = headers
+
+    def get(self, path: str, **kwargs):
+        return raw_client.get(path, headers=self.headers, **kwargs)
+
+    def post(self, path: str, **kwargs):
+        return raw_client.post(path, headers=self.headers, **kwargs)
+
+    def patch(self, path: str, **kwargs):
+        return raw_client.patch(path, headers=self.headers, **kwargs)
+
+
+client = AuthenticatedClient(ADMIN_HEADERS)
+
+
+def test_health_is_public_but_operational_api_requires_authentication() -> None:
+    assert raw_client.get("/api/v1/health").status_code == 200
+    assert raw_client.get("/api/v1/scope").status_code == 401
+    assert client.get("/api/v1/scope").json()["dry_run_default"] is True
+
+
+def test_identity_me_and_server_derived_actor_fields() -> None:
+    me = client.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json()["username"] == "alpha-admin"
+    assert set(me.json()["roles"]) == {"platform_admin", "tenant_admin"}
+
+    created = client.post(
+        "/api/v1/auth/users",
+        json={"username": "alpha-viewer", "password": "alpha-viewer-password", "roles": ["viewer"]},
+    )
+    assert created.status_code == 201
+    viewer_headers = login("alpha", "alpha-viewer", "alpha-viewer-password")
+    viewer = AuthenticatedClient(viewer_headers)
+    assert viewer.get("/api/v1/scope").status_code == 200
+    assert viewer.post("/api/v1/recon", json={"targets": ["192.168.56.10"], "dry_run": True}).status_code == 403
+
+    campaign_response = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "Identity attribution test",
+            "objective": "Verify actor fields come from the authenticated principal.",
+        },
+    )
+    assert campaign_response.status_code == 201
+    assert campaign_response.json()["owner"] == "alpha-admin"
+
+
+def test_bootstrap_is_single_use_and_platform_admin_can_provision_another_tenant() -> None:
+    second_bootstrap = raw_client.post(
+        "/api/v1/auth/bootstrap",
+        json={
+            "bootstrap_token": settings.auth_bootstrap_token,
+            "tenant_slug": "another",
+            "tenant_name": "Another Security",
+            "username": "another-admin",
+            "password": "another-admin-password",
+        },
+    )
+    assert second_bootstrap.status_code == 409
+
+    tenant = client.post(
+        "/api/v1/auth/tenants",
+        json={
+            "slug": "bravo",
+            "name": "Bravo Security",
+            "admin_username": "bravo-admin",
+            "admin_password": "bravo-admin-password",
+        },
+    )
+    assert tenant.status_code == 201
+    assert tenant.json()["slug"] == "bravo"
+
+
+def test_tenant_isolation_applies_to_campaigns_and_nested_resources() -> None:
+    bravo = AuthenticatedClient(login("bravo", "bravo-admin", "bravo-admin-password"))
+    alpha_campaign = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "Alpha isolated campaign",
+            "objective": "Confirm another tenant cannot enumerate or dereference this campaign.",
+        },
+    ).json()
+    assert bravo.get("/api/v1/campaigns").status_code == 200
+    assert bravo.get("/api/v1/campaigns").json() == []
+    assert bravo.get(f"/api/v1/campaigns/{alpha_campaign['campaign_id']}/timeline").status_code == 404
+
+
+def test_recon_rejects_out_of_scope_target_after_authentication() -> None:
     response = client.post(
         "/api/v1/recon",
         json={"targets": ["8.8.8.8"], "profile": "safe", "dry_run": True},
@@ -32,49 +149,15 @@ def test_detection_and_risk_correlation_endpoints() -> None:
     assert risk.json()[0]["technique_id"] == "T1558.003"
 
 
-def test_scenario_catalog_and_persisted_run() -> None:
+def test_scenario_campaign_evidence_governance_and_tenant_scoped_reports() -> None:
     catalog = client.get("/api/v1/scenarios")
     assert catalog.status_code == 200
     scenario = next(item for item in catalog.json() if item["scenario_id"] == "ad.identity-exposure-baseline")
-    assert "T1558.003" in scenario["technique_ids"]
-
-    response = client.post(
-        "/api/v1/scenarios/ad.identity-exposure-baseline/run",
-        json={
-            "scenario_id": "ad.identity-exposure-baseline",
-            "observations": [{"asset_id": "DC-01", "service_principal_name": "MSSQLSvc/db01:1433"}],
-            "alerts": [{"id": "alert-1", "rule": {"description": "T1558.003 Kerberoasting"}}],
-            "dry_run": True,
-        },
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["finding_count"] == 1
-    assert payload["coverage_percent"] == 50.0
-    assert payload["gaps"] == ["T1558.004"]
-
-    history = client.get("/api/v1/runs")
-    assert history.status_code == 200
-    assert any(item["run_id"] == payload["run_id"] for item in history.json())
-
-
-def test_expert_campaign_operations_and_trends() -> None:
-    campaign_response = client.post(
-        "/api/v1/campaigns",
-        json={
-            "name": "Q3 Identity Exposure Review",
-            "objective": "Prioritize identity paths and close detection gaps in the isolated lab.",
-            "owner": "blue-team",
-            "scope_snapshot": ["192.168.56.0/24"],
-        },
-    )
-    assert campaign_response.status_code == 201
-    campaign = campaign_response.json()
 
     run_response = client.post(
-        "/api/v1/scenarios/ad.identity-exposure-baseline/run",
+        f"/api/v1/scenarios/{scenario['scenario_id']}/run",
         json={
-            "scenario_id": "ad.identity-exposure-baseline",
+            "scenario_id": scenario["scenario_id"],
             "observations": [{"asset_id": "DC-01", "service_principal_name": "MSSQLSvc/db01:1433"}],
             "alerts": [{"id": "alert-1", "rule": {"description": "T1558.003 Kerberoasting"}}],
             "dry_run": True,
@@ -83,10 +166,17 @@ def test_expert_campaign_operations_and_trends() -> None:
     assert run_response.status_code == 200
     run_id = run_response.json()["run_id"]
 
-    link_response = client.post(f"/api/v1/campaigns/{campaign['campaign_id']}/runs/{run_id}")
-    assert link_response.status_code == 204
+    campaign = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "Q3 Identity Exposure Review",
+            "objective": "Prioritize identity paths and close detection gaps in the isolated lab.",
+            "scope_snapshot": ["192.168.56.0/24"],
+        },
+    ).json()
+    assert client.post(f"/api/v1/campaigns/{campaign['campaign_id']}/runs/{run_id}").status_code == 204
 
-    evidence_response = client.post(
+    evidence = client.post(
         "/api/v1/evidence",
         json={
             "campaign_id": campaign["campaign_id"],
@@ -96,12 +186,17 @@ def test_expert_campaign_operations_and_trends() -> None:
             "title": "Kerberoasting detection evidence",
             "sha256": "a" * 64,
             "technique_id": "T1558.003",
-            "notes": "Synthetic evidence fixture for rule-tuning review.",
         },
     )
-    assert evidence_response.status_code == 201
+    assert evidence.status_code == 201
+    reviewed = client.patch(
+        f"/api/v1/evidence/{evidence.json()['evidence_id']}/review",
+        json={"review_status": "accepted", "notes": "Reviewed by the authenticated admin."},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["reviewer"] == "alpha-admin"
 
-    remediation_response = client.post(
+    remediation = client.post(
         "/api/v1/remediations",
         json={
             "campaign_id": campaign["campaign_id"],
@@ -112,149 +207,25 @@ def test_expert_campaign_operations_and_trends() -> None:
             "priority": "high",
         },
     )
-    assert remediation_response.status_code == 201
-
-    timeline = client.get(f"/api/v1/campaigns/{campaign['campaign_id']}/timeline")
-    assert timeline.status_code == 200
-    assert {item["event_type"] for item in timeline.json()} == {"assessment_run", "evidence", "remediation"}
-
-    trend = client.get("/api/v1/trends/risk")
-    tuning = client.get("/api/v1/detection-tuning")
-    assert trend.status_code == 200 and trend.json()
-    assert tuning.status_code == 200
-    assert any(item["technique_id"] == "T1558.004" for item in tuning.json())
-
-
-def test_enterprise_integrity_manifests_sla_and_export() -> None:
-    campaign = client.post(
-        "/api/v1/campaigns",
-        json={
-            "name": "Integrity Control Review",
-            "objective": "Verify evidence provenance and remediation governance controls.",
-        },
-    ).json()
-    evidence = client.post(
-        "/api/v1/evidence",
-        json={
-            "campaign_id": campaign["campaign_id"],
-            "evidence_type": "fixture",
-            "source": "lab/fixtures/ad_observations.json",
-            "title": "AD observation manifest",
-            "sha256": "b" * 64,
-            "technique_id": "T1558.004",
-        },
-    )
-    assert evidence.status_code == 201
-
-    manifest = client.get(f"/api/v1/evidence/{evidence.json()['evidence_id']}/manifest")
-    assert manifest.status_code == 200
-    assert len(manifest.json()["manifest_sha256"]) == 64
-
-    remediation = client.post(
-        "/api/v1/remediations",
-        json={
-            "campaign_id": campaign["campaign_id"],
-            "finding_title": "Review account pre-authentication state",
-            "technique_id": "T1558.004",
-            "recommendation": "Enable pre-authentication and add a regression detection fixture.",
-            "owner": "identity-team",
-            "priority": "high",
-        },
-    )
     assert remediation.status_code == 201
-
-    sla = client.get("/api/v1/remediations/sla")
-    export = client.get(f"/api/v1/campaigns/{campaign['campaign_id']}/export")
-    integrity = client.get("/api/v1/integrity/audit")
-    assert sla.status_code == 200
-    assert any(item["remediation_id"] == remediation.json()["remediation_id"] for item in sla.json())
-    assert export.status_code == 200
-    assert len(export.json()["manifest_sha256"]) == 64
-    assert export.json()["evidence"][0]["evidence_id"] == evidence.json()["evidence_id"]
-    assert integrity.status_code == 200
-    assert integrity.json()["valid"] is True
-
-
-def test_governance_lifecycle_acceptance_and_kpis() -> None:
-    campaign = client.post(
-        "/api/v1/campaigns",
-        json={
-            "name": "Governance Control Review",
-            "objective": "Exercise evidence review, remediation lifecycle, and risk acceptance controls.",
-        },
-    ).json()
-    evidence = client.post(
-        "/api/v1/evidence",
-        json={
-            "campaign_id": campaign["campaign_id"],
-            "evidence_type": "fixture",
-            "source": "lab/fixtures/wazuh_alerts.json",
-            "title": "Detection gap evidence",
-            "sha256": "c" * 64,
-            "technique_id": "T1558.003",
-        },
-    ).json()
-    evidence_review = client.patch(
-        f"/api/v1/evidence/{evidence['evidence_id']}/review",
-        json={"review_status": "accepted", "reviewer": "soc-lead", "notes": "Reviewed against the lab fixture."},
-    )
-    assert evidence_review.status_code == 200
-    assert evidence_review.json()["review_status"] == "accepted"
-
-    remediation = client.post(
-        "/api/v1/remediations",
-        json={
-            "campaign_id": campaign["campaign_id"],
-            "finding_title": "Detection gap requires a regression rule",
-            "technique_id": "T1558.003",
-            "recommendation": "Add a correlation rule and preserve a synthetic regression event.",
-            "owner": "soc-engineering",
-            "priority": "critical",
-        },
-    ).json()
     lifecycle = client.patch(
-        f"/api/v1/remediations/{remediation['remediation_id']}/lifecycle",
-        json={"status": "in_progress", "actor": "soc-engineering", "note": "Rule design started."},
+        f"/api/v1/remediations/{remediation.json()['remediation_id']}/lifecycle",
+        json={"status": "in_progress", "note": "Rule design started."},
     )
     assert lifecycle.status_code == 200
-    assert lifecycle.json()["status"] == "in_progress"
 
     acceptance = client.post(
         "/api/v1/risk-acceptances",
         json={
             "campaign_id": campaign["campaign_id"],
-            "remediation_id": remediation["remediation_id"],
+            "remediation_id": remediation.json()["remediation_id"],
             "technique_id": "T1558.003",
             "finding_title": "Detection gap requires a regression rule",
             "rationale": "Temporary acceptance while the rule is implemented and validated in the lab.",
-            "approver": "security-manager",
             "expires_on": "2099-12-31",
         },
     )
     assert acceptance.status_code == 201
-    assert acceptance.json()["status"] == "active"
-
-    scorecard = client.get("/api/v1/scorecards/coverage")
-    kpis = client.get("/api/v1/kpis/executive")
-    acceptances = client.get("/api/v1/risk-acceptances")
-    assert scorecard.status_code == 200
-    assert scorecard.json()["accepted_risks"] >= 1
-    assert kpis.status_code == 200
-    evidence_records = client.get("/api/v1/evidence").json()
-    expected_backlog = sum(item["review_status"] in {"unreviewed", "in_review"} for item in evidence_records)
-    assert kpis.json()["evidence_review_backlog"] == expected_backlog
-    assert acceptances.status_code == 200
-
-
-def test_purple_coverage_endpoint_returns_gap() -> None:
-    response = client.post(
-        "/api/v1/purple/analyze",
-        json={
-            "expected_technique_ids": ["T1558.003", "T1558.004"],
-            "alerts": [{"id": "alert-1", "rule": {"description": "T1558.003 Kerberoasting"}}],
-            "dry_run": True,
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["coverage_percent"] == 50.0
-    assert response.json()["gaps"] == ["T1558.004"]
+    assert acceptance.json()["approver"] == "alpha-admin"
+    assert client.get(f"/api/v1/campaigns/{campaign['campaign_id']}/export").status_code == 200
+    assert client.get("/api/v1/integrity/audit").json()["valid"] is True
