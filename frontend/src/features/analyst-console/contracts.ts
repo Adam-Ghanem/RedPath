@@ -53,6 +53,29 @@ export type EvidenceResponse = {
   created_at: string;
 };
 
+export type PcapAnalysisSummary = {
+  analysis_id: string;
+  evidence_id: string;
+  tenant_id: string;
+  file_name: string;
+  sha256: string;
+  capture_format: string;
+  packet_count: number;
+  campaign_id?: string | null;
+  evidence_title?: string | null;
+  review_status: string;
+  redaction_mode: string;
+  redacted_fields: number;
+  flow_count: number;
+  dns_count: number;
+  created_at: string;
+};
+
+export type PcapEvidenceView = {
+  evidence: EvidenceResponse;
+  analysis: Record<string, unknown>;
+};
+
 export type RemediationSlaItem = {
   remediation_id: string;
   finding_title: string;
@@ -113,6 +136,7 @@ export type AnalystConsoleSnapshot = {
   coverage: CoverageScorecard;
   runs: AssessmentRunSummary[];
   evidence: EvidenceResponse[];
+  pcapAnalyses: PcapAnalysisSummary[];
   remediationSla: RemediationSlaItem[];
   detectionTuning: DetectionTuningItem[];
   integrity: IntegrityVerification;
@@ -129,4 +153,5 @@ export type ConsoleApi = {
   getSnapshot: (options?: { signal?: AbortSignal }) => Promise<AnalystConsoleSnapshot>;
   login?: (request: AuthLoginRequest) => Promise<AuthTokenResponse>;
   logout?: () => void;
+  getPcapEvidenceView?: (evidenceId: string) => Promise<PcapEvidenceView>;
 };

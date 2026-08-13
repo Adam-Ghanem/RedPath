@@ -40,7 +40,7 @@ describe("typed console API client", () => {
       return new Response(JSON.stringify(payloadByPath["/evidence/e-1/pcap"]), { status: 200 });
     });
 
-    const detail = await createConsoleApi({ baseUrl: "https://redpath.example/api/v1", fetchImpl }).getPcapEvidenceView("e-1");
+    const detail = await createConsoleApi({ baseUrl: "https://redpath.example/api/v1", fetchImpl }).getPcapEvidenceView!("e-1");
 
     expect(detail.evidence.evidence_id).toBe("e-1");
     expect(fetchImpl).toHaveBeenCalledTimes(1);

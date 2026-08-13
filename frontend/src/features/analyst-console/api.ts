@@ -10,6 +10,8 @@ import type {
   EvidenceResponse,
   ExecutiveKpis,
   IntegrityVerification,
+  PcapAnalysisSummary,
+  PcapEvidenceView,
   RemediationSlaItem,
   ScopeResponse,
 } from "./contracts";
@@ -124,18 +126,23 @@ export function createConsoleApi(options: ApiClientOptions = {}): ConsoleApi {
 
     async getSnapshot(options?: { signal?: AbortSignal }): Promise<AnalystConsoleSnapshot> {
       const signal = options?.signal;
-      const [scope, executiveKpis, coverage, runs, evidence, remediationSla, detectionTuning, integrity] = await Promise.all([
+      const [scope, executiveKpis, coverage, runs, evidence, pcapAnalyses, remediationSla, detectionTuning, integrity] = await Promise.all([
         getJson<ScopeResponse>(fetchImpl, baseUrl, "/scope", signal),
         getJson<ExecutiveKpis>(fetchImpl, baseUrl, "/kpis/executive", signal),
         getJson<CoverageScorecard>(fetchImpl, baseUrl, "/scorecards/coverage", signal),
         getJson<AssessmentRunSummary[]>(fetchImpl, baseUrl, "/runs?limit=8", signal),
         getJson<EvidenceResponse[]>(fetchImpl, baseUrl, "/evidence", signal),
+        getJson<PcapAnalysisSummary[]>(fetchImpl, baseUrl, "/pcap/analyses?limit=6", signal),
         getJson<RemediationSlaItem[]>(fetchImpl, baseUrl, "/remediations/sla", signal),
         getJson<DetectionTuningItem[]>(fetchImpl, baseUrl, "/detection-tuning", signal),
         getJson<IntegrityVerification>(fetchImpl, baseUrl, "/integrity/audit", signal),
       ]);
 
-      return { scope, executiveKpis, coverage, runs, evidence, remediationSla, detectionTuning, integrity };
+      return { scope, executiveKpis, coverage, runs, evidence, pcapAnalyses, remediationSla, detectionTuning, integrity };
+    },
+
+    async getPcapEvidenceView(evidenceId: string): Promise<PcapEvidenceView> {
+      return getJson<PcapEvidenceView>(fetchImpl, baseUrl, `/evidence/${encodeURIComponent(evidenceId)}/pcap`);
     },
 
     logout() {

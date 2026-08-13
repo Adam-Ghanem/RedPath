@@ -30,6 +30,7 @@ function snapshotResponse(path: string) {
   if (path === "/scorecards/coverage") return jsonResponse({ expected_techniques: 4, detected_techniques: 3, open_gaps: 1, accepted_risks: 0, coverage_percent: 75, effective_coverage_percent: 70 });
   if (path === "/runs") return jsonResponse([]);
   if (path === "/evidence") return jsonResponse([]);
+  if (path === "/pcap/analyses") return jsonResponse([]);
   if (path === "/remediations/sla") return jsonResponse([]);
   if (path === "/detection-tuning") return jsonResponse([]);
   if (path === "/integrity/audit") return jsonResponse({ valid: true, event_count: 4, tail_digest: "digest" });
@@ -56,7 +57,7 @@ describe("authenticated read-only analyst API", () => {
     expect(actualSession.username).toBe("alpha-analyst");
     expect(actualSession.tenant_slug).toBe("alpha");
     expect(snapshot.scope.dry_run_default).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(9);
+    expect(fetchMock).toHaveBeenCalledTimes(10);
     for (const [, init] of fetchMock.mock.calls) {
       expect((init?.headers as Headers).get("Authorization")).toBe(`Bearer ${token.access_token}`);
       expect(init?.method).toBe("GET");
