@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from app.api.routes import build_router
+from app.main import create_app
 from app.core.audit import AuditLogger
 from app.core.config import Settings
 from app.core.scope import ScopePolicy
@@ -15,7 +15,6 @@ from app.services.discovery_jobs import (
     DiscoveryRateLimitExceeded,
 )
 from app.services.recon import ReconService
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
@@ -90,14 +89,22 @@ def test_discovery_api_is_fail_closed_and_enforces_scope(tmp_path: Path) -> None
         database_url=f"sqlite:///{tmp_path / 'api.db'}",
         audit_log_path=str(tmp_path / "api-audit.jsonl"),
         allowed_cidrs="192.168.56.0/24",
-        discovery_api_token="test-token",
-        discovery_tenant_id="tenant-a",
+        auth_bootstrap_token="discovery-test-bootstrap-token",
         dry_run=True,
     )
-    app = FastAPI()
-    app.include_router(build_router(settings))
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer test-token", "X-RedPath-Tenant": "tenant-a"}
+    client = TestClient(create_app(settings))
+    bootstrap = client.post(
+        "/api/v1/auth/bootstrap",
+        json={
+            "bootstrap_token": settings.auth_bootstrap_token,
+            "tenant_slug": "discovery",
+            "tenant_name": "Discovery Test Tenant",
+            "username": "discovery-admin",
+            "password": "discovery-admin-password",
+        },
+    )
+    assert bootstrap.status_code == 201
+    headers = {"Authorization": f"Bearer {bootstrap.json()['access_token']}"}
 
     unauthenticated = client.get("/api/v1/discovery/jobs")
     assert unauthenticated.status_code == 401
@@ -130,9 +137,3 @@ def test_discovery_api_is_fail_closed_and_enforces_scope(tmp_path: Path) -> None
     assert status["status"] == "completed"
     assert status["dry_run"] is True
     assert client.get("/api/v1/inventory/assets", headers=headers).json() == []
-
-    wrong_tenant = client.get(
-        f"/api/v1/discovery/jobs/{job_id}",
-        headers={"Authorization": "Bearer test-token", "X-RedPath-Tenant": "tenant-b"},
-    )
-    assert wrong_tenant.status_code == 403
