@@ -1,6 +1,6 @@
 # Observability contract
 
-AI-10 adds a dependency-light observability layer to the API. Each request receives a correlation identifier from `X-Request-ID` when it matches the safe allow-list pattern; otherwise the API generates a UUID. The identifier is returned in the response header and included in structured HTTP completion or failure logs.
+This release adds a dependency-light observability layer to the API. Each request receives a correlation identifier from `X-Request-ID` when it matches the safe allow-list pattern; otherwise the API generates a UUID. The identifier is returned in the response header and included in structured HTTP completion or failure logs.
 
 > Request observability records request metadata only. It never logs request bodies, query-string values, cookies, authorization headers, or raw telemetry payloads.
 
