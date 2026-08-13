@@ -22,7 +22,16 @@ from app.core.observability import MetricsRegistry
 from app.core.request_context import current_actor, get_principal
 from app.core.scope import ScopePolicy, ScopeViolation
 from app.db.models import create_session_factory
-from app.kernel.contracts import IntegrationAnalysisRequest, IntegrationContext, IntegrationContextRequest
+from app.kernel.contracts import (
+    CapabilityNegotiation,
+    CapabilityNegotiationRequest,
+    IntegrationAnalysisRequest,
+    IntegrationContext,
+    IntegrationContextRequest,
+    IntegrationKernelError,
+    PaginationRequest,
+    PluginCatalogPage,
+)
 from app.kernel.service import IntegrationKernel
 from app.models.telemetry import TelemetryIngestionResponse, TelemetryListResponse, TelemetryQuery
 from app.plugins.registry import list_plugins
@@ -150,6 +159,11 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
 
     def record_audit(operation: str, details: dict, *, actor: str | None = None) -> str:
         return audit.record(operation, details, actor=actor or current_actor())
+
+    def raise_integration_error(exc: IntegrationKernelError) -> None:
+        detail = exc.error.model_dump(mode="json")
+        detail.update(exc.error.details)
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
 
     @router.post(
         "/auth/bootstrap",
@@ -349,6 +363,34 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
     def plugins() -> list[dict]:
         return list_plugins()
 
+    @protected_router.get(
+        "/plugins/catalog",
+        response_model=PluginCatalogPage,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def plugin_catalog(
+        limit: int = Query(default=50, ge=1, le=100),
+        cursor: str | None = Query(default=None, min_length=1, max_length=6, pattern=r"^\d{1,6}$"),
+    ) -> PluginCatalogPage:
+        return integration_kernel.registry.catalog_page(PaginationRequest(limit=limit, cursor=cursor))
+
+    @protected_router.post(
+        "/integrations/{plugin_id}/negotiate",
+        response_model=CapabilityNegotiation,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def integration_negotiate(plugin_id: str, request: CapabilityNegotiationRequest) -> CapabilityNegotiation:
+        principal = get_principal()
+        context = IntegrationContext(
+            tenant_id=principal.tenant_id,
+            actor=principal.username,
+            request_id=request.request_id or str(uuid4()),
+            contract_version=request.contract_version,
+            requested_capabilities=request.requested_capabilities,
+            dry_run=settings.dry_run or request.dry_run,
+        )
+        return integration_kernel.negotiate(plugin_id, context)
+
     @protected_router.post(
         "/integrations/{plugin_id}/plan", dependencies=[Depends(permission_dependency("analyze"))]
     )
@@ -358,11 +400,15 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
             tenant_id=principal.tenant_id,
             actor=principal.username,
             request_id=request.request_id or str(uuid4()),
+            contract_version=request.contract_version,
+            requested_capabilities=request.requested_capabilities,
             targets=request.targets,
             dry_run=settings.dry_run or request.dry_run,
         )
         try:
             return integration_kernel.plan(plugin_id, context)
+        except IntegrationKernelError as exc:
+            raise_integration_error(exc)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ScopeViolation as exc:
@@ -379,11 +425,15 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
             tenant_id=principal.tenant_id,
             actor=principal.username,
             request_id=request.request_id or str(uuid4()),
+            contract_version=request.contract_version,
+            requested_capabilities=request.requested_capabilities,
             targets=request.targets,
             dry_run=settings.dry_run or request.dry_run,
         )
         try:
             return integration_kernel.analyze(plugin_id, context, request.observations)
+        except IntegrationKernelError as exc:
+            raise_integration_error(exc)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ScopeViolation as exc:

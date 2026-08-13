@@ -132,3 +132,41 @@ ruff check backend/app backend/tests
 ```
 
 See the repository’s [architecture guide](architecture.md) for the broader control-plane/evidence-plane model and [contribution guide](../CONTRIBUTING.md) for branch and review conventions.
+
+
+## Stable extension API
+
+The kernel extension API provides an additive negotiation step before planning or analysis. `CapabilityNegotiationRequest` contains only a requested contract version, optional capability IDs, request ID, and dry-run preference. Tenant and actor identity are not accepted in this negotiation body; the API derives them from the authenticated principal. The response reports the plugin version, selected contract version, capability descriptors, compatibility decision, unsupported capabilities, and a structured error when selection is not possible.
+
+A plugin manifest declares its module kind, capabilities, supported contract versions, required permission labels, read-only status, and dry-run support. The registry rejects mutating or non-dry-run plugins at registration. The kernel rejects incompatible contract versions and unsupported capability requests before a plugin plan or analyzer is invoked. Existing plan and analyze routes remain available, while `POST /api/v1/integrations/{plugin_id}/negotiate` exposes the explicit compatibility check.
+
+| Module kind | Safe contract fixture | Boundary |
+| --- | --- | --- |
+| `pcap` | `pcap.offline_analysis` | Analyze registered offline evidence; no live capture, packet injection, or packet mutation |
+| `telemetry` | `telemetry.read_only` | Read bounded, redacted telemetry; no rule writes, alert acknowledgement, or remote SIEM mutation |
+| `discovery` | `discovery.safe_inventory` | Use approved scope and rate limits; no uncontrolled scanning |
+| `detection` | `detection.observation_rules` | Analyze normalized observations and regression fixtures; no automatic rule deployment |
+| `graph` | `graph.exposure_risk` | Evaluate explicit relationships and evidence; no exploit execution |
+| `case` | `case.evidence_linking` | Link evidence-backed findings; no destructive remediation or external ticket mutation |
+
+## Structured errors and pagination
+
+`IntegrationError` is the stable error envelope for kernel consumers. It contains an allow-listed code, safe message, request ID, optional plugin ID, bounded string details, and a retryable flag. The API maps it to an HTTP status while preserving structured fields. Error messages do not include stack traces, raw payloads, credentials, command text, or sensitive target values. Existing status behavior remains compatible for unknown plugins (`404`), scope rejection (`403`), and malformed or cross-tenant observations (`422`).
+
+`PaginationRequest`, `PaginationMetadata`, `Page[T]`, and `PluginCatalogPage` provide a bounded cursor contract for catalog consumers. Page size is limited to 100, cursors are restricted to non-negative offsets at the transport boundary, and the catalog is sorted by stable plugin ID. The legacy `/api/v1/plugins` list remains available for compatibility; `/api/v1/plugins/catalog` exposes the versioned page envelope.
+
+## Security invariants
+
+All sensitive integration routes remain behind authentication and the existing `read` or `analyze` RBAC dependencies. The API derives tenant and actor from the authenticated principal and ignores client-supplied tenant and actor fields retained only for backward-compatible request parsing. The kernel validates target scope through the existing allow-list hook, preserves the environment-level dry-run override, enforces tenant equality on normalized observations, and records only metadata counts and server-derived identity through the existing audit chain.
+
+The contract fixtures in `backend/tests/fixtures/kernel_modules.py` use synthetic observations containing only evidence references and scalar metadata. They do not connect to live hosts, capture traffic, send packets, query remote SIEM services, modify detection rules, mutate cases, or execute commands. The contract tests cover all six module kinds, exact version negotiation, unsupported capabilities, structured unknown-plugin errors, pagination, tenant isolation, protected catalog access, and server-derived actor behavior.
+
+## Extension API verification
+
+Focused extension and kernel regression coverage is run with:
+
+```bash
+pytest -q backend/tests/test_kernel_extension.py backend/tests/test_kernel.py
+```
+
+The full backend suite and frontend quality gates remain required before merge. Downstream module contributors should implement against the negotiation and page envelopes, keep adapter-specific schemas behind their module boundary, and add fixture tests before registering a new capability.

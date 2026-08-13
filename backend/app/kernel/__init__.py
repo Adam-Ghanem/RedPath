@@ -1,5 +1,41 @@
-"""Platform contracts and integration orchestration kernel."""
-
+from app.kernel.contracts import (
+    CapabilityDescriptor,
+    CapabilityNegotiation,
+    CapabilityNegotiationRequest,
+    IntegrationAnalysis,
+    IntegrationAnalysisRequest,
+    IntegrationContext,
+    IntegrationContextRequest,
+    IntegrationError,
+    IntegrationErrorCode,
+    IntegrationKernelError,
+    IntegrationPlan,
+    ModuleKind,
+    Page,
+    PaginationMetadata,
+    PaginationRequest,
+    PluginCatalogItem,
+    PluginCatalogPage,
+)
 from app.kernel.service import IntegrationKernel
 
-__all__ = ["IntegrationKernel"]
+__all__ = [
+    "CapabilityDescriptor",
+    "CapabilityNegotiation",
+    "CapabilityNegotiationRequest",
+    "IntegrationAnalysis",
+    "IntegrationAnalysisRequest",
+    "IntegrationContext",
+    "IntegrationContextRequest",
+    "IntegrationError",
+    "IntegrationErrorCode",
+    "IntegrationKernel",
+    "IntegrationKernelError",
+    "IntegrationPlan",
+    "ModuleKind",
+    "Page",
+    "PaginationMetadata",
+    "PaginationRequest",
+    "PluginCatalogItem",
+    "PluginCatalogPage",
+]
