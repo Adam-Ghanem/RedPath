@@ -15,6 +15,11 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/scenarios` | Return curated safe assessment playbooks | Static catalog read |
 | GET | `/api/v1/runs` | Return recent persisted assessment summaries | Local SQLite read |
 | GET/POST | `/api/v1/campaigns` | Create and list bounded assessment campaigns | Local metadata only; audit logged |
+| GET/POST/PATCH | `/api/v1/cases` and `/api/v1/cases/{case_id}/status` | Case lifecycle alias over bounded campaigns | Server-derived tenant and actor; valid transition state machine |
+| GET | `/api/v1/cases/{case_id}/governance-history` | Return tenant-scoped case transition history | Append-only local records; actor and tenant are server-derived |
+| GET | `/api/v1/cases/{case_id}/evidence` | List case evidence metadata | Tenant-filtered; cross-tenant IDs return 404 |
+| GET | `/api/v1/cases/{case_id}/remediations` | List case remediation records | Tenant-filtered; cross-tenant IDs return 404 |
+| GET | `/api/v1/cases/{case_id}/export` | Build a tenant-safe report-ready case package | Read-only; includes governance history and manifest digest |
 | POST | `/api/v1/campaigns/{campaign_id}/runs/{run_id}` | Link a completed scenario run to a campaign | Validates both IDs; no rerun |
 | GET | `/api/v1/campaigns/{campaign_id}/timeline` | Return ordered campaign evidence and remediation events | Local SQLite read |
 | GET | `/api/v1/campaigns/{campaign_id}/export` | Build a deterministic JSON campaign package | Read-only; returns manifest digest |
@@ -102,7 +107,9 @@ The scenario response combines findings, coverage, detection gaps, recommendatio
 
 ## Expert operations workflow
 
-A campaign is a bounded assessment context with an owner and scope snapshot. Evidence registration requires a source, evidence type, title, SHA-256 digest, and optional run/technique links. Remediation records add ownership, priority, due date, and lifecycle status. Trend points aggregate stored run records by period, while detection-tuning items convert recurring technique gaps into rule intent, event-source, and regression-fixture recommendations. The audit endpoint recomputes each chained digest and identifies the first invalid event. The export endpoint creates a deterministic JSON package with campaign, timeline, evidence, remediation, trend, and tuning sections plus a manifest digest. These operations are metadata and evidence workflows only; RedPath does not modify AD, Wazuh, or external lab systems.
+A campaign is a bounded assessment context with an owner and scope snapshot. The case endpoints are a compatibility-preserving alias over this resource and always derive `tenant_id` and actor fields from the authenticated principal. Evidence registration requires a source, evidence type, title, SHA-256 digest, and optional run/technique links; the immutable evidence manifest excludes mutable review status and notes. Evidence review follows the valid `unreviewed`/`in_review`/`accepted`/`rejected` state machine and records the server-derived reviewer in both the response and governance history. Remediation records add ownership, priority, due date, and lifecycle status; lifecycle transitions are validated and history actor fields are server-derived.
+
+A case can move from `active` to `on_hold` or `closed`, and from `on_hold` to `active` or `closed`; closed cases cannot reopen. Closure requires at least one registered evidence item, all case evidence to be accepted, and every remediation to be resolved/closed or covered by a future-dated active risk acceptance. The tenant-safe export includes the server-derived tenant, campaign data, evidence, remediation, governance history, trends, detection tuning, and a deterministic manifest digest. These operations are metadata and evidence workflows only; RedPath does not modify AD, Wazuh, or external lab systems.
 
 ## Offline PCAP forensics
 
@@ -161,7 +168,7 @@ The normalized regression endpoint accepts only bounded normalized telemetry fix
 
 ## Error semantics
 
-Missing or invalid bearer credentials return HTTP 401 with a bearer challenge. A valid principal without the required role or permission returns HTTP 403, and a bounded request budget returns HTTP 429. A target outside the allow-list also returns HTTP 403. A malformed graph or unknown technique returns HTTP 422. The service returns structured FastAPI validation errors for malformed payloads. Audit events include a request operation, the authenticated actor, the effective dry-run mode, relevant identifiers, and a chained digest.
+Missing or invalid bearer credentials return HTTP 401 with a bearer challenge. A valid principal without the required role or permission returns HTTP 403, and a bounded request budget returns HTTP 429. A target outside the allow-list also returns HTTP 403. A malformed graph or unknown technique returns HTTP 422. Unknown or cross-tenant case, evidence, remediation, and export identifiers return HTTP 404. Invalid governance transitions, expired risk acceptance requests, and closure attempts that do not satisfy evidence/remediation gates return HTTP 409. The service returns structured FastAPI validation errors for malformed payloads. Audit events include a request operation, the authenticated actor, the effective dry-run mode, relevant identifiers, tenant context when authenticated, and a chained digest.
 
 ## Asynchronous discovery jobs and inventory
 

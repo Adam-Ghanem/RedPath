@@ -5,6 +5,7 @@ from typing import Callable
 from uuid import uuid4
 
 from app.core.ownership import tenant_query
+from app.core.redaction import redact_text
 from app.core.request_context import current_actor, current_tenant_id
 from app.db.models import AssessmentRun, Campaign, EvidenceItem, RemediationItem, RiskAcceptance, utcnow
 from app.schemas.contracts import (
@@ -17,6 +18,7 @@ from app.schemas.contracts import (
     RiskAcceptanceCreate,
     RiskAcceptanceResponse,
 )
+from app.services.case_governance import evidence_manifest_sha256, record_governance_event
 from app.services.expert_ops import remediation_sla
 
 SessionFactory = Callable[[], object]
@@ -44,6 +46,7 @@ _REMEDIATION_TRANSITIONS = {
 
 def _evidence_response(row: EvidenceItem) -> EvidenceResponse:
     return EvidenceResponse(
+        tenant_id=row.tenant_id,
         campaign_id=row.campaign_id,
         run_id=row.run_id,
         evidence_type=row.evidence_type,
@@ -53,6 +56,7 @@ def _evidence_response(row: EvidenceItem) -> EvidenceResponse:
         technique_id=row.technique_id,
         notes=row.notes,
         evidence_id=row.id,
+        manifest_sha256=row.manifest_sha256 or evidence_manifest_sha256(row),
         review_status=row.review_status,
         reviewer=row.reviewer,
         reviewed_at=row.reviewed_at,
@@ -84,7 +88,15 @@ def review_evidence(
         row.reviewer = current_actor()
         row.reviewed_at = datetime.now(timezone.utc)
         if request.notes:
-            row.notes = request.notes
+            row.notes = redact_text(request.notes)
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                "evidence.reviewed",
+                f"Evidence {row.title} marked {row.review_status}.",
+                {"evidence_id": row.id, "status": row.review_status},
+            )
         session.commit()
         session.refresh(row)
     return _evidence_response(row)
@@ -109,10 +121,21 @@ def update_remediation(
         row.status = request.status
         row.updated_at = utcnow()
         if request.note:
-            row.recommendation = f"{row.recommendation}\nLifecycle note ({current_actor()}): {request.note}"
+            row.recommendation = (
+                f"{row.recommendation}\nLifecycle note ({current_actor()}): {redact_text(request.note)}"
+            )
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                "remediation.lifecycle_changed",
+                f"Remediation {row.finding_title} moved to {row.status}.",
+                {"remediation_id": row.id, "status": row.status},
+            )
         session.commit()
         session.refresh(row)
     return RemediationResponse(
+        tenant_id=row.tenant_id,
         campaign_id=row.campaign_id,
         finding_title=row.finding_title,
         technique_id=row.technique_id,
@@ -138,6 +161,7 @@ def _acceptance_status(row: RiskAcceptance) -> str:
 
 def _acceptance_response(row: RiskAcceptance) -> RiskAcceptanceResponse:
     return RiskAcceptanceResponse(
+        tenant_id=row.tenant_id,
         campaign_id=row.campaign_id,
         remediation_id=row.remediation_id,
         technique_id=row.technique_id,
@@ -153,6 +177,12 @@ def _acceptance_response(row: RiskAcceptance) -> RiskAcceptanceResponse:
 
 
 def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: SessionFactory) -> RiskAcceptanceResponse:
+    try:
+        expires_on = date.fromisoformat(request.expires_on)
+    except ValueError as exc:
+        raise GovernanceViolation("expires_on must be an ISO date") from exc
+    if expires_on <= date.today():
+        raise GovernanceViolation("expires_on must be in the future")
     tenant_id = current_tenant_id()
     now = utcnow()
     row = RiskAcceptance(
@@ -185,6 +215,14 @@ def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: Sessi
         ):
             raise KeyError(f"Unknown remediation: {request.remediation_id}")
         session.add(row)
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                "risk.acceptance_created",
+                f"Risk acceptance created through {row.expires_on}.",
+                {"acceptance_id": row.id, "remediation_id": row.remediation_id},
+            )
         session.commit()
         session.refresh(row)
     return _acceptance_response(row)

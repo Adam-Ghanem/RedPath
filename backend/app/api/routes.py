@@ -19,9 +19,9 @@ from app.core.auth import (
 )
 from app.core.config import Settings
 from app.core.observability import MetricsRegistry
-from app.core.request_context import current_actor, get_principal
+from app.core.request_context import current_actor, get_principal, maybe_principal
 from app.core.scope import ScopePolicy, ScopeViolation
-from app.db.models import Asset, EvidenceItem, create_session_factory
+from app.db.models import Asset, Campaign, EvidenceItem, create_session_factory
 from app.kernel.contracts import (
     CapabilityNegotiation,
     CapabilityNegotiationRequest,
@@ -51,6 +51,7 @@ from app.schemas.contracts import (
     CampaignExport,
     CampaignResponse,
     CampaignTimelineEvent,
+    CaseStatusUpdate,
     CorrelatedRisk,
     CorrelationRequest,
     CoverageScorecard,
@@ -70,6 +71,7 @@ from app.schemas.contracts import (
     EvidenceReviewUpdate,
     ExecutiveKpis,
     FindingInput,
+    GovernanceHistoryEvent,
     GraphRequest,
     GraphResult,
     IntegrityVerification,
@@ -106,6 +108,8 @@ from app.schemas.identity import (
 from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary, PcapEvidenceView
 from app.services.ad_detection import detect_ad_findings
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
+from app.services.case_governance import list_governance_history
+from app.services.case_ops import list_cases, update_case_status
 from app.services.correlation import correlate_findings
 from app.services.detection_framework import DetectionRuleCatalog
 from app.services.discovery_jobs import (
@@ -188,7 +192,11 @@ def build_router(
     protected_router = APIRouter(prefix="", dependencies=[Depends(authenticate)])
 
     def record_audit(operation: str, details: dict, *, actor: str | None = None) -> str:
-        return audit.record(operation, details, actor=actor or current_actor())
+        principal = maybe_principal()
+        enriched = dict(details)
+        if principal:
+            enriched.setdefault("tenant_id", principal.tenant_id)
+        return audit.record(operation, enriched, actor=actor or current_actor())
 
     def raise_integration_error(exc: IntegrationKernelError) -> None:
         detail = exc.error.model_dump(mode="json")
@@ -608,6 +616,89 @@ def build_router(
     def campaigns() -> list[CampaignResponse]:
         return list_campaigns(session_factory)
 
+    @protected_router.get(
+        "/cases", response_model=list[CampaignResponse], dependencies=[Depends(permission_dependency("read"))]
+    )
+    def cases() -> list[CampaignResponse]:
+        return list_cases(session_factory)
+
+    @protected_router.post(
+        "/cases",
+        response_model=CampaignResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def case_create(request: CampaignCreate) -> CampaignResponse:
+        result = create_campaign(request, session_factory)
+        record_audit("case.created", {"case_id": result.campaign_id})
+        return result
+
+    @protected_router.patch(
+        "/cases/{case_id}/status",
+        response_model=CampaignResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def case_status(case_id: str, request: CaseStatusUpdate) -> CampaignResponse:
+        try:
+            result = update_case_status(case_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit("case.status_changed", {"case_id": case_id, "status": result.status})
+        return result
+
+    @protected_router.get(
+        "/cases/{case_id}/governance-history",
+        response_model=list[GovernanceHistoryEvent],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def case_governance_history(case_id: str) -> list[GovernanceHistoryEvent]:
+        try:
+            history = list_governance_history(case_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not history:
+            tenant_id = get_principal().tenant_id
+            with session_factory() as session:
+                known_case = session.query(Campaign).filter_by(id=case_id, tenant_id=tenant_id).first()
+            if known_case is None:
+                raise HTTPException(status_code=404, detail=f"Unknown case: {case_id}")
+        return history
+
+    @protected_router.get(
+        "/cases/{case_id}/evidence",
+        response_model=list[EvidenceResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def case_evidence(case_id: str) -> list[EvidenceResponse]:
+        try:
+            return list_evidence(session_factory, case_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @protected_router.get(
+        "/cases/{case_id}/remediations",
+        response_model=list[RemediationResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def case_remediations(case_id: str) -> list[RemediationResponse]:
+        try:
+            return list_remediations(session_factory, case_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @protected_router.get(
+        "/cases/{case_id}/export",
+        response_model=CampaignExport,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def case_export(case_id: str) -> CampaignExport:
+        try:
+            return campaign_export(case_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @protected_router.post(
         "/campaigns",
         response_model=CampaignResponse,
@@ -677,6 +768,8 @@ def build_router(
             result = review_evidence(evidence_id, request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         record_audit(
             "evidence.reviewed",
             {"evidence_id": evidence_id, "status": result.review_status, "reviewer": result.reviewer},
@@ -809,6 +902,8 @@ def build_router(
             result = update_remediation(remediation_id, request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         record_audit(
             "remediation.lifecycle_updated",
             {"remediation_id": remediation_id, "status": result.status, "actor": current_actor()},
@@ -834,6 +929,8 @@ def build_router(
             result = create_risk_acceptance(request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         record_audit(
             "risk.accepted",
             {"acceptance_id": result.acceptance_id, "approver": result.approver, "expires_on": result.expires_on},

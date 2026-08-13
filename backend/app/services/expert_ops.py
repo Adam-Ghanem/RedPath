@@ -8,6 +8,7 @@ from typing import Callable
 from uuid import uuid4
 
 from app.core.ownership import tenant_query
+from app.core.redaction import redact_text
 from app.core.request_context import current_actor, current_tenant_id
 from app.db.models import AssessmentRun, Campaign, CampaignRunLink, EvidenceItem, RemediationItem, utcnow
 from app.schemas.contracts import (
@@ -24,12 +25,14 @@ from app.schemas.contracts import (
     RemediationSlaItem,
     TrendPoint,
 )
+from app.services.case_governance import evidence_manifest_sha256, list_governance_history, record_governance_event
 
 SessionFactory = Callable[[], object]
 
 
 def _campaign_response(row: Campaign) -> CampaignResponse:
     return CampaignResponse(
+        tenant_id=row.tenant_id,
         campaign_id=row.id,
         name=row.name,
         objective=row.objective,
@@ -56,6 +59,7 @@ def create_campaign(request: CampaignCreate, session_factory: SessionFactory) ->
     )
     with session_factory() as session:
         session.add(row)
+        record_governance_event(session, row.id, "case.created", f"Case {row.name} created.")
         session.commit()
         session.refresh(row)
     return _campaign_response(row)
@@ -92,6 +96,13 @@ def link_run(campaign_id: str, run_id: str, session_factory: SessionFactory) -> 
         )
         if existing is None:
             session.add(CampaignRunLink(campaign_id=campaign_id, run_id=run_id, tenant_id=tenant_id))
+            record_governance_event(
+                session,
+                campaign_id,
+                "assessment.linked",
+                f"Assessment run {run_id} linked to the case.",
+                {"run_id": run_id},
+            )
         session.commit()
 
 
@@ -107,7 +118,8 @@ def create_evidence(request: EvidenceCreate, session_factory: SessionFactory) ->
         title=request.title,
         sha256=request.sha256,
         technique_id=request.technique_id,
-        notes=request.notes,
+        notes=redact_text(request.notes),
+        manifest_sha256=None,
         review_status="unreviewed",
     )
     with session_factory() as session:
@@ -125,12 +137,23 @@ def create_evidence(request: EvidenceCreate, session_factory: SessionFactory) ->
             .first() is None
         ):
             raise KeyError(f"Unknown assessment run: {request.run_id}")
+        row.manifest_sha256 = evidence_manifest_sha256(row)
         session.add(row)
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                "evidence.registered",
+                f"Evidence {row.title} registered.",
+                {"evidence_id": row.id, "sha256": row.sha256},
+            )
         session.commit()
         session.refresh(row)
     return EvidenceResponse(
         **request.model_dump(),
+        tenant_id=row.tenant_id,
         evidence_id=row.id,
+        manifest_sha256=row.manifest_sha256 or evidence_manifest_sha256(row),
         review_status=row.review_status,
         created_at=row.created_at,
     )
@@ -142,9 +165,12 @@ def list_evidence(session_factory: SessionFactory, campaign_id: str | None = Non
         query = tenant_query(session.query(EvidenceItem), EvidenceItem, tenant_id).order_by(
             EvidenceItem.created_at.desc()
         )
+        if campaign_id and session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first() is None:
+            raise KeyError(f"Unknown campaign: {campaign_id}")
         rows = query.filter_by(campaign_id=campaign_id).all() if campaign_id else query.all()
     return [
         EvidenceResponse(
+            tenant_id=row.tenant_id,
             campaign_id=row.campaign_id,
             run_id=row.run_id,
             evidence_type=row.evidence_type,
@@ -154,6 +180,7 @@ def list_evidence(session_factory: SessionFactory, campaign_id: str | None = Non
             technique_id=row.technique_id,
             notes=row.notes,
             evidence_id=row.id,
+            manifest_sha256=row.manifest_sha256 or evidence_manifest_sha256(row),
             review_status=row.review_status,
             created_at=row.created_at,
         )
@@ -170,7 +197,7 @@ def create_remediation(request: RemediationCreate, session_factory: SessionFacto
         campaign_id=request.campaign_id,
         finding_title=request.finding_title,
         technique_id=request.technique_id,
-        recommendation=request.recommendation,
+        recommendation=redact_text(request.recommendation),
         owner=current_actor(),
         priority=request.priority,
         status="open",
@@ -187,10 +214,19 @@ def create_remediation(request: RemediationCreate, session_factory: SessionFacto
         ):
             raise KeyError(f"Unknown campaign: {request.campaign_id}")
         session.add(row)
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                "remediation.created",
+                f"Remediation for {row.finding_title} created.",
+                {"remediation_id": row.id, "priority": row.priority},
+            )
         session.commit()
         session.refresh(row)
     return RemediationResponse(
         **request.model_dump(),
+        tenant_id=row.tenant_id,
         remediation_id=row.id,
         status=row.status,
         created_at=row.created_at,
@@ -201,6 +237,8 @@ def create_remediation(request: RemediationCreate, session_factory: SessionFacto
 def list_remediations(session_factory: SessionFactory, campaign_id: str | None = None) -> list[RemediationResponse]:
     tenant_id = current_tenant_id()
     with session_factory() as session:
+        if campaign_id and session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first() is None:
+            raise KeyError(f"Unknown campaign: {campaign_id}")
         query = (
             tenant_query(session.query(RemediationItem), RemediationItem, tenant_id).order_by(
                 RemediationItem.updated_at.desc()
@@ -209,6 +247,7 @@ def list_remediations(session_factory: SessionFactory, campaign_id: str | None =
         rows = query.filter_by(campaign_id=campaign_id).all() if campaign_id else query.all()
     return [
         RemediationResponse(
+            tenant_id=row.tenant_id,
             campaign_id=row.campaign_id,
             finding_title=row.finding_title,
             technique_id=row.technique_id,
@@ -375,6 +414,7 @@ def evidence_manifest(evidence_id: str, session_factory: SessionFactory) -> Evid
         raise KeyError(f"Unknown evidence: {evidence_id}")
     payload = {
         "evidence_id": row.id,
+        "tenant_id": row.tenant_id,
         "campaign_id": row.campaign_id,
         "run_id": row.run_id,
         "evidence_type": row.evidence_type,
@@ -382,14 +422,12 @@ def evidence_manifest(evidence_id: str, session_factory: SessionFactory) -> Evid
         "title": row.title,
         "sha256": row.sha256,
         "technique_id": row.technique_id,
-        "review_status": row.review_status,
-        "notes": row.notes,
     }
     canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return EvidenceManifest(
         evidence_id=row.id,
         canonical_payload=canonical_payload,
-        manifest_sha256=hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
+        manifest_sha256=row.manifest_sha256 or hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
         generated_at=datetime.now(timezone.utc),
     )
 
@@ -447,20 +485,25 @@ def campaign_export(campaign_id: str, session_factory: SessionFactory) -> Campai
     remediations = list_remediations(session_factory, campaign_id)
     trend = risk_trend(session_factory)
     tuning = detection_tuning_queue(session_factory)
+    governance_history = list_governance_history(campaign_id, session_factory)
     package = {
+        "tenant_id": tenant_id,
         "campaign": campaign.model_dump(mode="json"),
         "timeline": [item.model_dump(mode="json") for item in timeline],
         "evidence": [item.model_dump(mode="json") for item in evidence],
         "remediations": [item.model_dump(mode="json") for item in remediations],
+        "governance_history": [item.model_dump(mode="json") for item in governance_history],
         "trend": [item.model_dump(mode="json") for item in trend],
         "detection_tuning": [item.model_dump(mode="json") for item in tuning],
     }
     canonical = json.dumps(package, sort_keys=True, separators=(",", ":"))
     return CampaignExport(
+        tenant_id=tenant_id,
         campaign=campaign,
         timeline=timeline,
         evidence=evidence,
         remediations=remediations,
+        governance_history=governance_history,
         trend=trend,
         detection_tuning=tuning,
         manifest_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),

@@ -204,6 +204,7 @@ class EvidenceItem(Base):
     reviewer: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -344,6 +345,19 @@ class TelemetryEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class CaseGovernanceEvent(Base):
+    __tablename__ = "case_governance_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    summary: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 
@@ -367,6 +381,7 @@ _TENANT_TABLES = (
     "evidence_items",
     "remediation_items",
     "risk_acceptances",
+    "case_governance_events",
     "assessment_runs",
     "purple_runs",
     "detection_observations",
@@ -409,7 +424,6 @@ def run_migrations(engine) -> None:
                 text("INSERT INTO schema_migrations (version, applied_at) VALUES (2, :applied_at)"),
                 {"applied_at": utcnow().isoformat()},
             )
-
         applied_v3 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 3")).first()
         if applied_v3:
             return
@@ -423,10 +437,20 @@ def run_migrations(engine) -> None:
                         "NOT NULL DEFAULT '{}'"
                     )
                 )
-        connection.execute(
-            text("INSERT INTO schema_migrations (version, applied_at) VALUES (3, :applied_at)"),
-            {"applied_at": utcnow().isoformat()},
-        )
+            connection.execute(
+                text("INSERT INTO schema_migrations (version, applied_at) VALUES (3, :applied_at)"),
+                {"applied_at": utcnow().isoformat()},
+            )
+
+        applied_v4 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 4")).first()
+        if not applied_v4 and "evidence_items" in inspector.get_table_names():
+            evidence_columns = {column["name"] for column in inspector.get_columns("evidence_items")}
+            if "manifest_sha256" not in evidence_columns:
+                connection.execute(text("ALTER TABLE evidence_items ADD COLUMN manifest_sha256 VARCHAR(64)"))
+            connection.execute(
+                text("INSERT INTO schema_migrations (version, applied_at) VALUES (4, :applied_at)"),
+                {"applied_at": utcnow().isoformat()},
+            )
 
 
 def create_session_factory(database_url: str):

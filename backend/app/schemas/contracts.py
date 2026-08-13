@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from string import hexdigits
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator
@@ -601,11 +602,28 @@ class CampaignCreate(BaseModel):
 
 
 class CampaignResponse(CampaignCreate):
+    tenant_id: str
     owner: str
     campaign_id: str
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class CaseStatusUpdate(BaseModel):
+    status: Literal["active", "on_hold", "closed"]
+    note: str = Field(default="", max_length=2000)
+
+
+class GovernanceHistoryEvent(BaseModel):
+    event_id: str
+    tenant_id: str
+    case_id: str
+    event_type: str
+    actor: str
+    summary: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
 
 
 class EvidenceCreate(BaseModel):
@@ -618,9 +636,18 @@ class EvidenceCreate(BaseModel):
     technique_id: str | None = None
     notes: str = Field(default="", max_length=4000)
 
+    @field_validator("sha256")
+    @classmethod
+    def validate_sha256(cls, value: str) -> str:
+        if any(character not in hexdigits for character in value):
+            raise ValueError("sha256 must contain only hexadecimal characters")
+        return value.lower()
+
 
 class EvidenceResponse(EvidenceCreate):
+    tenant_id: str
     evidence_id: str
+    manifest_sha256: str
     review_status: str
     reviewer: str | None = None
     reviewed_at: datetime | None = None
@@ -643,6 +670,7 @@ class RemediationCreate(BaseModel):
 
 
 class RemediationResponse(RemediationCreate):
+    tenant_id: str
     remediation_id: str
     status: str
     created_at: datetime
@@ -664,6 +692,7 @@ class RiskAcceptanceCreate(BaseModel):
 
 
 class RiskAcceptanceResponse(RiskAcceptanceCreate):
+    tenant_id: str
     approver: str
     acceptance_id: str
     status: Literal["active", "expired", "revoked"]
@@ -741,10 +770,12 @@ class CampaignTimelineEvent(BaseModel):
 
 
 class CampaignExport(BaseModel):
+    tenant_id: str
     campaign: CampaignResponse
     timeline: list[CampaignTimelineEvent] = Field(default_factory=list)
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     remediations: list[RemediationResponse] = Field(default_factory=list)
+    governance_history: list[GovernanceHistoryEvent] = Field(default_factory=list)
     trend: list[TrendPoint] = Field(default_factory=list)
     detection_tuning: list[DetectionTuningItem] = Field(default_factory=list)
     manifest_sha256: str
