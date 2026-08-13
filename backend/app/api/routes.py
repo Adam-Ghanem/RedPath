@@ -35,7 +35,11 @@ from app.schemas.contracts import (
     CorrelatedRisk,
     CorrelationRequest,
     CoverageScorecard,
+    DetectionEvaluationRequest,
+    DetectionEvaluationResponse,
     DetectionGapReport,
+    DetectionRule,
+    DetectionRuleCreate,
     DetectionTuningItem,
     DiscoveryJobCreate,
     DiscoveryJobStatus,
@@ -52,6 +56,8 @@ from app.schemas.contracts import (
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
+    RegressionReport,
+    RegressionRunRequest,
     RemediationCreate,
     RemediationLifecycleUpdate,
     RemediationResponse,
@@ -76,6 +82,7 @@ from app.schemas.identity import (
 from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
+from app.services.detection_framework import DetectionRuleCatalog
 from app.services.discovery_jobs import (
     DiscoveryJobNotFound,
     DiscoveryJobService,
@@ -244,6 +251,7 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         session_factory,
         max_query_window_hours=settings.siem_max_query_window_hours,
     )
+    detection_catalog = DetectionRuleCatalog()
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
@@ -749,8 +757,80 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         )
         return result
 
+    @protected_router.get(
+        "/detections/rules",
+        response_model=list[DetectionRule],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def detection_rules() -> list[DetectionRule]:
+        return detection_catalog.list_rules()
+
     @protected_router.post(
-        "/detections/ad", response_model=list[FindingInput], dependencies=[Depends(permission_dependency("analyze"))]
+        "/detections/rules",
+        response_model=DetectionRule,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_rule_create(request: DetectionRuleCreate) -> DetectionRule:
+        try:
+            result = detection_catalog.add_rule(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.rule_registered",
+            {
+                "rule_id": result.rule_id,
+                "deployment_status": result.deployment_status,
+                "requires_approval": result.requires_approval,
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/evaluate",
+        response_model=DetectionEvaluationResponse,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_evaluate(request: DetectionEvaluationRequest) -> DetectionEvaluationResponse:
+        try:
+            result = detection_catalog.evaluate(request.events, request.rule_ids)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        record_audit(
+            "detection.rules_evaluated",
+            {
+                "event_count": result.event_count,
+                "rule_count": result.rule_count,
+                "match_count": len(result.matches),
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/regressions/run",
+        response_model=RegressionReport,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_regressions(request: RegressionRunRequest) -> RegressionReport:
+        try:
+            result = detection_catalog.run_regressions(request.fixtures, request.rule_ids)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        record_audit(
+            "detection.regression_completed",
+            {
+                "run_id": result.run_id,
+                "status": result.status,
+                "total_cases": result.total_cases,
+                "false_positive_rate": result.false_positive_rate,
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/ad",
+        response_model=list[FindingInput],
+        dependencies=[Depends(permission_dependency("analyze"))],
     )
     def ad_detections(observations: list[dict]) -> list[FindingInput]:
         findings = detect_ad_findings(observations)
