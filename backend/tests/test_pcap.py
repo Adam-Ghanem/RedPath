@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import struct
 from pathlib import Path
 
@@ -53,8 +54,17 @@ def test_analyze_pcap_is_offline_and_hashes_original_bytes() -> None:
     assert result["capture_format"] == "pcap"
     assert result["packet_count"] == 2
     assert result["protocol_counts"] == {"udp": 2}
-    assert result["dns_queries"] == ["example.test"]
-    assert {endpoint["ip"] for endpoint in result["endpoints"]} == {"192.168.56.10", "192.168.56.53"}
+    assert result["dns_queries"]
+    assert result["dns_queries"] != ["example.test"]
+    assert all(endpoint["ip"].startswith("ip_") for endpoint in result["endpoints"])
+    assert result["flow_count"] == 2
+    assert result["dns_summary"][0]["query"].startswith("dns_")
+    assert result["redaction_mode"] == "pseudonymized"
+    assert result["redacted_fields"] > 0
+    serialized = str(result)
+    assert "192.168.56.10" not in serialized
+    assert "192.168.56.53" not in serialized
+    assert "example.test" not in serialized
     assert all("password" not in str(observation).lower() for observation in result["observations"])
 
 
@@ -108,6 +118,27 @@ def test_pcap_api_persists_metadata_and_enforces_role_and_tenant_isolation(tmp_p
     assert payload["evidence_id"]
     assert payload["sha256"] == hashlib.sha256(data).hexdigest()
     assert payload["packet_count"] == 2
+    assert payload["flow_count"] == 2
+    assert payload["redaction_mode"] == "pseudonymized"
+    assert payload["redacted_fields"] > 0
+    assert "192.168.56.10" not in created.text
+    assert "example.test" not in created.text
+
+    linked = client.get(f"/api/v1/evidence/{payload['evidence_id']}/pcap", headers=headers)
+    assert linked.status_code == 200
+    assert linked.json()["evidence"]["evidence_id"] == payload["evidence_id"]
+    assert linked.json()["analysis"]["flow_count"] == 2
+    audit_events = [
+        json.loads(line)
+        for line in Path(settings.audit_log_path).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    analyzed_event = next(event for event in audit_events if event["operation"] == "pcap.analyzed")
+    assert analyzed_event["actor"] == "pcap-admin"
+    assert analyzed_event["details"]["tenant_id"] == bootstrap.json()["tenant_id"]
+    integrity = client.get("/api/v1/integrity/audit", headers=headers)
+    assert integrity.status_code == 200
+    assert integrity.json()["valid"] is True
 
     own_list = client.get(
         "/api/v1/pcap/analyses",
@@ -144,6 +175,11 @@ def test_pcap_api_persists_metadata_and_enforces_role_and_tenant_isolation(tmp_p
         headers=other_headers,
     )
     assert cross_tenant_detail.status_code == 404
+    cross_tenant_link = client.get(
+        f"/api/v1/evidence/{payload['evidence_id']}/pcap",
+        headers=other_headers,
+    )
+    assert cross_tenant_link.status_code == 404
 
 
 def test_pcap_api_rejects_oversized_and_non_capture_uploads(tmp_path: Path) -> None:
@@ -182,6 +218,22 @@ def test_pcap_api_rejects_oversized_and_non_capture_uploads(tmp_path: Path) -> N
     assert invalid.status_code == 422
 
 
+def test_parser_limits_bound_observations_flows_and_endpoints() -> None:
+    result = analyze_pcap(
+        _pcap_fixture(),
+        "capture.pcap",
+        max_observations=1,
+        max_flows=1,
+        max_endpoints=1,
+    )
+
+    assert result["packet_count"] == 2
+    assert len(result["observations"]) == 1
+    assert len(result["flows"]) == 1
+    assert len(result["endpoints"]) == 1
+    assert any("capped" in warning for warning in result["warnings"])
+
+
 def test_analyze_pcapng_decodes_enhanced_packet_block() -> None:
     frame = _ethernet_ipv4_udp("192.168.56.10", "192.168.56.53", 53000, 53, _dns_query("pcapng.test"))
     section_header = struct.pack(">II", 0x0A0D0D0A, 28)
@@ -205,4 +257,6 @@ def test_analyze_pcapng_decodes_enhanced_packet_block() -> None:
 
     assert result["capture_format"] == "pcapng"
     assert result["packet_count"] == 1
-    assert result["dns_queries"] == ["pcapng.test"]
+    assert result["dns_queries"]
+    assert result["dns_queries"] != ["pcapng.test"]
+    assert result["capture_format"] == "pcapng"

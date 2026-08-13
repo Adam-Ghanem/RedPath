@@ -53,6 +53,71 @@ export type EvidenceResponse = {
   created_at: string;
 };
 
+export type PcapFlowSummary = {
+  flow_id: string;
+  protocol: "tcp" | "udp" | "icmp" | "other";
+  source: string;
+  destination: string;
+  source_port?: number | null;
+  destination_port?: number | null;
+  packet_count: number;
+  byte_count: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
+};
+
+export type PcapDnsSummary = {
+  query: string;
+  count: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
+};
+
+export type PcapAnalysisSummary = {
+  analysis_id: string;
+  tenant_id: string;
+  evidence_id: string;
+  file_name: string;
+  sha256: string;
+  capture_format: "pcap" | "pcapng";
+  packet_count: number;
+  campaign_id?: string | null;
+  evidence_title?: string | null;
+  review_status: string;
+  redaction_mode: "pseudonymized";
+  redacted_fields: number;
+  flow_count: number;
+  dns_count: number;
+  created_at: string;
+};
+
+export type PcapAnalysisDetail = PcapAnalysisSummary & {
+  file_size: number;
+  first_packet_at?: string | null;
+  last_packet_at?: string | null;
+  protocol_counts: Record<string, number>;
+  endpoints: Array<{ ip: string; packet_count: number; byte_count: number }>;
+  dns_queries: string[];
+  observations: Array<{
+    timestamp_utc: string;
+    observation_type: string;
+    protocol: string;
+    source_ip?: string | null;
+    destination_ip?: string | null;
+    source_port?: number | null;
+    destination_port?: number | null;
+    attributes: Record<string, unknown>;
+  }>;
+  flows: PcapFlowSummary[];
+  dns_summary: PcapDnsSummary[];
+  warnings: string[];
+};
+
+export type PcapEvidenceView = {
+  evidence: EvidenceResponse;
+  analysis: PcapAnalysisDetail;
+};
+
 export type RemediationSlaItem = {
   remediation_id: string;
   finding_title: string;
@@ -87,6 +152,7 @@ export type AnalystConsoleSnapshot = {
   coverage: CoverageScorecard;
   runs: AssessmentRunSummary[];
   evidence: EvidenceResponse[];
+  pcapAnalyses: PcapAnalysisSummary[];
   remediationSla: RemediationSlaItem[];
   detectionTuning: DetectionTuningItem[];
   integrity: IntegrityVerification;
@@ -99,4 +165,5 @@ export type SnapshotLoadState =
 
 export type ConsoleApi = {
   getSnapshot: () => Promise<AnalystConsoleSnapshot>;
+  getPcapEvidenceView: (evidenceId: string) => Promise<PcapEvidenceView>;
 };

@@ -226,6 +226,11 @@ class PcapAnalysis(Base):
     dns_queries: Mapped[list[str]] = mapped_column(JSON, default=list)
     observations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    redaction_mode: Mapped[str] = mapped_column(String(32), default="pseudonymized")
+    redacted_fields: Mapped[int] = mapped_column(Integer, default=0)
+    flow_count: Mapped[int] = mapped_column(Integer, default=0)
+    flows: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    dns_summary: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

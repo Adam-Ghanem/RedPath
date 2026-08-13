@@ -7,6 +7,8 @@ const payloadByPath: Record<string, unknown> = {
   "/scorecards/coverage": { expected_techniques: 5, detected_techniques: 3, open_gaps: 2, accepted_risks: 0, coverage_percent: 60, effective_coverage_percent: 55 },
   "/runs?limit=8": [],
   "/evidence": [],
+  "/pcap/analyses?limit=6": [],
+  "/evidence/e-1/pcap": { evidence: { evidence_id: "e-1" }, analysis: { analysis_id: "a-1" } },
   "/remediations/sla": [],
   "/detection-tuning": [],
   "/integrity/audit": { valid: true, event_count: 3, tail_digest: "abc" },
@@ -23,10 +25,25 @@ describe("typed console API client", () => {
 
     const snapshot = await createConsoleApi({ baseUrl: "https://redpath.example/api/v1/", fetchImpl }).getSnapshot();
 
-    expect(fetchImpl).toHaveBeenCalledTimes(8);
+    expect(fetchImpl).toHaveBeenCalledTimes(9);
     expect(snapshot.scope.dry_run_default).toBe(true);
     expect(snapshot.executiveKpis.risk_score).toBe(61);
     expect(snapshot.integrity.valid).toBe(true);
+    expect(snapshot.pcapAnalyses).toEqual([]);
+  });
+
+  it("loads a linked PCAP evidence detail through a same-origin GET", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://redpath.example/api/v1/evidence/e-1/pcap");
+      expect(init?.method).toBe("GET");
+      expect(init?.credentials).toBe("same-origin");
+      return new Response(JSON.stringify(payloadByPath["/evidence/e-1/pcap"]), { status: 200 });
+    });
+
+    const detail = await createConsoleApi({ baseUrl: "https://redpath.example/api/v1", fetchImpl }).getPcapEvidenceView("e-1");
+
+    expect(detail.evidence.evidence_id).toBe("e-1");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("returns a bounded error without exposing response content when a read fails", async () => {

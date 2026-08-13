@@ -91,7 +91,7 @@ from app.schemas.identity import (
     UserCreateRequest,
     UserResponse,
 )
-from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary
+from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary, PcapEvidenceView
 from app.services.ad_detection import detect_ad_findings
 from app.services.attack_path_risk import analyze_attack_path_risk
 from app.services.correlation import correlate_findings
@@ -132,7 +132,13 @@ from app.services.identity import (
     InvalidCredentials,
 )
 from app.services.mitre import all_techniques
-from app.services.pcap import PcapFormatError, get_pcap_analysis, list_pcap_analyses, register_pcap_analysis
+from app.services.pcap import (
+    PcapFormatError,
+    get_pcap_analysis,
+    get_pcap_evidence_view_by_evidence,
+    list_pcap_analyses,
+    register_pcap_analysis,
+)
 from app.services.purple import build_detection_gap_report
 from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
@@ -616,13 +622,25 @@ def build_router(
         if len(data) > settings.pcap_max_upload_bytes:
             raise HTTPException(status_code=413, detail="PCAP evidence exceeds the configured upload limit")
         try:
-            result = register_pcap_analysis(data, file_name, tenant_id, campaign_id, session_factory)
+            result = register_pcap_analysis(
+                data,
+                file_name,
+                tenant_id,
+                campaign_id,
+                session_factory,
+                max_packets=settings.pcap_max_packets,
+                max_endpoints=settings.pcap_max_endpoints,
+                max_dns_queries=settings.pcap_max_dns_queries,
+                max_flows=settings.pcap_max_flows,
+                max_observations=settings.pcap_max_observations,
+                redaction_salt=settings.pcap_redaction_salt,
+            )
         except PcapFormatError as exc:
-            audit.record("pcap.rejected", {"tenant_id": tenant_id, "file_name": file_name, "reason": str(exc)})
+            record_audit("pcap.rejected", {"tenant_id": tenant_id, "file_name": file_name, "reason": str(exc)})
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "pcap.analyzed",
             {
                 "analysis_id": result.analysis_id,
@@ -652,6 +670,17 @@ def build_router(
             return get_pcap_analysis(analysis_id, get_principal().tenant_id, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @protected_router.get(
+        "/evidence/{evidence_id}/pcap",
+        response_model=PcapEvidenceView,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def evidence_pcap_view(evidence_id: str) -> PcapEvidenceView:
+        try:
+            return get_pcap_evidence_view_by_evidence(evidence_id, get_principal().tenant_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="PCAP evidence not found") from exc
 
     @protected_router.get(
         "/remediations",

@@ -19,7 +19,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { consoleApi } from "./api";
-import type { ConsoleApi, SnapshotLoadState } from "./contracts";
+import type { ConsoleApi, PcapEvidenceView, PcapAnalysisSummary, SnapshotLoadState } from "./contracts";
 import { buildAnalystConsoleModel, formatUtc } from "./model";
 
 import "./analyst-console.css";
@@ -51,6 +51,7 @@ function SnapshotError({ message, retry }: { message: string; retry: () => void 
 export function AnalystConsole({ api = consoleApi }: AnalystConsoleProps) {
   const [state, setState] = useState<SnapshotLoadState>({ kind: "loading" });
   const [activePanel, setActivePanel] = useState<ConsolePanel>("priorities");
+  const [pcapDetail, setPcapDetail] = useState<{ evidenceId: string; loading: boolean; detail?: PcapEvidenceView; error?: string } | null>(null);
 
   const refresh = async () => {
     setState({ kind: "loading" });
@@ -65,6 +66,16 @@ export function AnalystConsole({ api = consoleApi }: AnalystConsoleProps) {
   useEffect(() => { void refresh(); }, []);
 
   const model = useMemo(() => state.kind === "ready" ? buildAnalystConsoleModel(state.snapshot) : null, [state]);
+
+  const inspectPcap = async (analysis: PcapAnalysisSummary) => {
+    setPcapDetail({ evidenceId: analysis.evidence_id, loading: true });
+    try {
+      const detail = await api.getPcapEvidenceView(analysis.evidence_id);
+      setPcapDetail({ evidenceId: analysis.evidence_id, loading: false, detail });
+    } catch {
+      setPcapDetail({ evidenceId: analysis.evidence_id, loading: false, error: "The linked PCAP summary is unavailable in this tenant." });
+    }
+  };
 
   if (state.kind === "error") return <SnapshotError message={state.message} retry={() => void refresh()} />;
 
@@ -120,6 +131,30 @@ export function AnalystConsole({ api = consoleApi }: AnalystConsoleProps) {
             <div className="soc-coverage-bars"><div><span>Observed coverage</span><b>{model.posture.coveragePercent}%</b><i><em style={{ width: `${model.posture.coveragePercent}%` }} /></i></div><div><span>Effective coverage</span><b>{model.posture.effectiveCoveragePercent}%</b><i><em className="effective" style={{ width: `${model.posture.effectiveCoveragePercent}%` }} /></i></div></div>
             <div className="soc-signal-callout"><SlidersHorizontal size={18} /><p><b>{model.tuningQueue.length} rule-tuning item{model.tuningQueue.length === 1 ? "" : "s"}</b> are awaiting detection engineering review.</p></div>
           </article>
+        </section>
+
+        <section className="soc-panel soc-pcap-panel" id="pcap-evidence" aria-labelledby="pcap-evidence-title">
+          <div className="soc-panel__head"><div><span className="soc-card-label">OFFLINE PCAP EVIDENCE</span><h2 id="pcap-evidence-title">Network summaries</h2></div><FileSearch size={19} /></div>
+          {state.snapshot.pcapAnalyses.length ? <div className="soc-pcap-layout">
+            <div className="soc-pcap-list" aria-label="PCAP evidence summaries">
+              {state.snapshot.pcapAnalyses.slice(0, 6).map((item) => <button type="button" className={`soc-pcap-row ${pcapDetail?.evidenceId === item.evidence_id ? "active" : ""}`} key={item.analysis_id} onClick={() => void inspectPcap(item)}>
+                <span className="soc-severity soc-severity--info">{item.review_status.replace(/_/g, " ")}</span>
+                <span className="soc-pcap-row__body"><strong>{item.evidence_title ?? item.file_name}</strong><small>{item.capture_format.toUpperCase()} · {item.packet_count} packets · {item.flow_count} flows · {item.dns_count} DNS</small></span>
+                <ChevronRight size={17} />
+              </button>)}
+            </div>
+            <div className="soc-pcap-detail" aria-live="polite">
+              {!pcapDetail && <p className="soc-pcap-placeholder">Select an authorised evidence record to view bounded flow and DNS summaries.</p>}
+              {pcapDetail?.loading && <p className="soc-pcap-placeholder">Loading the redacted evidence view…</p>}
+              {pcapDetail?.error && <p className="soc-pcap-placeholder">{pcapDetail.error}</p>}
+              {pcapDetail?.detail && <>
+                <div className="soc-pcap-detail__head"><div><strong>{pcapDetail.detail.evidence.title}</strong><small>{pcapDetail.detail.analysis.redaction_mode} · {pcapDetail.detail.analysis.redacted_fields} fields pseudonymized</small></div><span className="soc-run-state">READ ONLY</span></div>
+                <div className="soc-pcap-stats"><span><b>{pcapDetail.detail.analysis.flow_count}</b> flows</span><span><b>{pcapDetail.detail.analysis.dns_summary.length}</b> DNS summaries</span><span><b>{pcapDetail.detail.analysis.packet_count}</b> packets</span></div>
+                <div className="soc-pcap-columns"><div><span className="soc-card-label">BOUNDED FLOWS</span>{pcapDetail.detail.analysis.flows.slice(0, 4).map((flow) => <div className="soc-pcap-value" key={flow.flow_id}><strong>{flow.source} → {flow.destination}</strong><small>{flow.protocol.toUpperCase()} · {flow.packet_count} packets · {flow.byte_count} bytes</small></div>)}</div><div><span className="soc-card-label">DNS SUMMARIES</span>{pcapDetail.detail.analysis.dns_summary.slice(0, 4).map((dns) => <div className="soc-pcap-value" key={dns.query}><strong>{dns.query}</strong><small>{dns.count} observation{dns.count === 1 ? "" : "s"}</small></div>)}</div></div>
+                <p className="soc-panel__foot"><LockKeyhole size={13} /> Endpoints and DNS names are pseudonymized by server policy; raw packet bytes are not available in this view.</p>
+              </>}
+            </div>
+          </div> : <EmptyQueue title="No offline PCAP evidence" detail="Authorised capture analyses will appear here after a server-side offline review." />}
         </section>
 
         <section className="soc-lower-grid" id="telemetry">

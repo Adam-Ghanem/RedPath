@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     auth_bootstrap_token: str = ""
     rate_limit_requests_per_minute: int = 120
     pcap_max_upload_bytes: int = 50 * 1024 * 1024
+    pcap_max_packets: int = 100_000
+    pcap_max_endpoints: int = 100
+    pcap_max_dns_queries: int = 500
+    pcap_max_flows: int = 1_000
+    pcap_max_observations: int = 1_000
+    pcap_redaction_salt: str = "redpath-lab-redaction-salt"
     siem_max_query_window_hours: int = 24
     siem_request_timeout_seconds: int = 20
 

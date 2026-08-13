@@ -22,6 +22,7 @@ const snapshot: AnalystConsoleSnapshot = {
     { evidence_id: "e-1", evidence_type: "pcap", source: "lab", title: "Accepted capture", sha256: "a".repeat(64), notes: "", review_status: "accepted", created_at: "2026-08-10T08:00:00Z" },
     { evidence_id: "e-2", evidence_type: "event", source: "lab", title: "Pending event", sha256: "b".repeat(64), notes: "", review_status: "in_review", created_at: "2026-08-11T08:00:00Z" },
   ],
+  pcapAnalyses: [],
   remediationSla: [
     { remediation_id: "r-ontrack", finding_title: "Later remediation", priority: "critical", status: "open", owner: "network", due_date: "2026-08-20", target_days: 7, state: "on_track" },
     { remediation_id: "r-overdue-high", finding_title: "Overdue high", priority: "high", status: "open", owner: "identity", due_date: "2026-08-01", target_days: 7, state: "overdue" },

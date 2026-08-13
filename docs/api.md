@@ -41,6 +41,7 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | POST | `/api/v1/pcap/analyses` | Analyze one offline PCAP or PCAP-NG upload | Role-gated, tenant-scoped, bounded upload; no raw bytes persisted |
 | GET | `/api/v1/pcap/analyses` | List normalized PCAP analyses for a tenant | Role-gated, tenant-filtered local read |
 | GET | `/api/v1/pcap/analyses/{analysis_id}` | Retrieve one normalized PCAP analysis | Role-gated; cross-tenant IDs return 404 |
+| GET | `/api/v1/evidence/{evidence_id}/pcap` | Retrieve linked evidence and bounded redacted PCAP summaries | Read permission; evidence and analysis tenant predicates; cross-tenant IDs return 404 |
 
 ## Recon request
 
@@ -98,7 +99,7 @@ A campaign is a bounded assessment context with an owner and scope snapshot. Evi
 
 ## Offline PCAP forensics
 
-The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations in memory, register the digest in the existing evidence workflow, and persist only normalized metadata. Upload requires an authenticated principal with the `analyze` permission, while reads require the `read` permission; the tenant is derived from the authenticated session. See [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, and parser coverage.
+The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations and flow/DNS summaries in memory, pseudonymize IP and DNS identifiers with a server-held HMAC salt, register the digest in the existing evidence workflow, and persist only normalized metadata. Raw packet bytes and application payloads are not returned or persisted. Upload requires an authenticated principal with the `analyze` permission, while reads require the `read` permission; the tenant and actor are derived from the authenticated session. The linked evidence view joins only records belonging to the authenticated tenant. See [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, and parser coverage.
 
 ## Purple-team request
 
