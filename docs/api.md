@@ -19,6 +19,10 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/campaigns/{campaign_id}/timeline` | Return ordered campaign evidence and remediation events | Local SQLite read |
 | GET | `/api/v1/campaigns/{campaign_id}/export` | Build a deterministic JSON campaign package | Read-only; returns manifest digest |
 | POST | `/api/v1/recon` | Plan or run safe discovery | Validates every IP; dry-run wins over requested execution |
+| POST | `/api/v1/discovery/jobs` | Submit bounded asynchronous discovery | Protected by analyze permission; tenant and actor are server-derived; dry-run wins over request |
+| GET | `/api/v1/discovery/jobs` | List current-tenant discovery jobs | Protected read; tenant predicate is server-derived; history is retention-bounded |
+| GET | `/api/v1/discovery/jobs/{job_id}` | Read one current-tenant job | Cross-tenant identifiers return 404; raw credentials and scanner output are not returned |
+| GET | `/api/v1/inventory/assets` | Read normalized current-tenant inventory | Protected read; joins and filters both asset and scan tenant IDs |
 | POST | `/api/v1/detections/ad` | Analyze exported AD observations | No AD connection; no attack execution |
 | POST | `/api/v1/risk/correlate` | Combine finding severity/CVSS and path relevance | Pure in-memory analysis |
 | POST | `/api/v1/scenarios/{scenario_id}/run` | Execute a safe evidence-driven scenario | Dry-run default; persists local summary only |
@@ -49,6 +53,14 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 ```
 
 The response returns a `scan_id`, the normalized targets, the generated argument arrays, any parsed assets, and warnings. The `profile` is deliberately constrained to `safe` and `service_inventory`; there is no endpoint for arbitrary command text or exploit scripts.
+
+## Discovery inventory
+
+Discovery jobs accept only allow-listed IP targets and fixed safe profiles. The server computes `effective_dry_run = settings.dry_run or request.dry_run`, and request bodies never supply tenant or actor fields. The authenticated principal supplies both: the tenant scopes every job, scan, asset, and inventory query; the server-derived actor is captured in job provenance and audit events.
+
+Each inventory response retains the existing flat identity and observation fields and adds a strict `asset` object conforming to the shared versioned asset contract. The `provenance` object contains only bounded source, scan/job identifiers, authenticated actor, observation time, dry-run state, and a SHA-256 observation hash. Asset identity is deterministic for `(tenant_id, ip)`, so repeated authorized observations reconcile the same row rather than creating duplicate assets. Ports and services are normalized, sorted, and deduplicated.
+
+Completed and failed jobs are retained only within the configured retention window and maximum history count per tenant. Retention deletes job metadata, not normalized assets or audit records. Active queued/running jobs are not evicted by count-based pruning. Inventory is read-only and never executes scanning or mutates external systems.
 
 ## AD observation request
 

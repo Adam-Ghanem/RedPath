@@ -92,6 +92,7 @@ class DiscoveryJob(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    actor: Mapped[str] = mapped_column(String(128), default="system")
     profile: Mapped[str] = mapped_column(String(32), default="safe")
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     dry_run: Mapped[bool] = mapped_column(default=True)
@@ -103,6 +104,7 @@ class DiscoveryJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class Asset(Base):
@@ -116,6 +118,10 @@ class Asset(Base):
     ports: Mapped[list[int]] = mapped_column(JSON, default=list)
     services: Mapped[list[str]] = mapped_column(JSON, default=list)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    observation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     scan_run: Mapped[ScanRun] = relationship(back_populates="assets")
 
 

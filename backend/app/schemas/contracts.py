@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
 
+from app.models.domain import Asset as SharedAsset
+
 
 class DiscoveryJobCreate(BaseModel):
     """Request to enqueue a bounded, allow-listed discovery job."""
@@ -32,12 +34,27 @@ class DiscoveryJobStatus(BaseModel):
     completed_at: datetime | None = None
 
 
+class AssetProvenance(BaseModel):
+    """Bounded provenance attached to a normalized inventory observation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(min_length=1, max_length=128)
+    scan_id: str = Field(min_length=1, max_length=128)
+    job_id: str = Field(min_length=1, max_length=128)
+    actor: str = Field(min_length=1, max_length=128)
+    observed_at: datetime
+    dry_run: bool
+    observation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class InventoryAsset(BaseModel):
-    """AI-01-compatible asset identity plus normalized discovery observations."""
+    """Shared asset identity plus normalized, tenant-scoped discovery observations."""
 
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["1.0"] = "1.0"
+    asset: SharedAsset
     asset_id: str = Field(min_length=1, max_length=128)
     tenant_id: str = Field(min_length=1, max_length=128)
     display_name: str = Field(min_length=1, max_length=255)
@@ -49,6 +66,9 @@ class InventoryAsset(BaseModel):
     scan_id: str
     source: str = "recon"
     discovered_at: datetime
+    first_seen_at: datetime
+    last_seen_at: datetime
+    provenance: AssetProvenance
 
 
 class ReconRequest(BaseModel):

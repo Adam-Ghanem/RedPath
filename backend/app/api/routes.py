@@ -277,6 +277,8 @@ def build_router(
         audit,
         max_workers=settings.recon_max_workers,
         max_jobs_per_minute=settings.discovery_max_jobs_per_minute,
+        retention_hours=settings.discovery_job_retention_hours,
+        retention_max=settings.discovery_job_retention_max,
     )
     siem_client = WazuhIndexerClient(
         settings.wazuh_indexer_url,
@@ -768,7 +770,13 @@ def build_router(
         requested_targets = [str(target) for target in request.targets]
         effective_dry_run = settings.dry_run or request.dry_run
         try:
-            return discovery_jobs.submit(principal.tenant_id, requested_targets, request.profile, effective_dry_run)
+            return discovery_jobs.submit(
+                principal.tenant_id,
+                requested_targets,
+                request.profile,
+                effective_dry_run,
+                actor=current_actor(),
+            )
         except DiscoveryRateLimitExceeded as exc:
             record_audit(
                 "discovery.job_rate_limited",
@@ -788,7 +796,7 @@ def build_router(
         dependencies=[Depends(permission_dependency("read"))],
     )
     def discovery_job_list(limit: int = 20) -> list[DiscoveryJobStatus]:
-        return discovery_jobs.list(get_principal().tenant_id, limit)
+        return discovery_jobs.list(get_principal().tenant_id, limit, actor=current_actor())
 
     @protected_router.get(
         "/discovery/jobs/{job_id}",
@@ -797,7 +805,7 @@ def build_router(
     )
     def discovery_job_get(job_id: str) -> DiscoveryJobStatus:
         try:
-            return discovery_jobs.get(get_principal().tenant_id, job_id)
+            return discovery_jobs.get(get_principal().tenant_id, job_id, actor=current_actor())
         except DiscoveryJobNotFound as exc:
             raise HTTPException(status_code=404, detail="Discovery job not found") from exc
 
@@ -807,7 +815,7 @@ def build_router(
         dependencies=[Depends(permission_dependency("read"))],
     )
     def inventory_assets(limit: int = 100) -> list[InventoryAsset]:
-        return discovery_jobs.inventory(get_principal().tenant_id, limit)
+        return discovery_jobs.inventory(get_principal().tenant_id, limit, actor=current_actor())
 
     @protected_router.post(
         "/recon", response_model=ReconResult, dependencies=[Depends(permission_dependency("analyze"))]

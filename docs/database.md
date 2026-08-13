@@ -4,8 +4,9 @@ The MVP uses SQLite for portability and keeps the schema compatible with Postgre
 
 | Table | Key fields | Purpose |
 | --- | --- | --- |
-| `scan_runs` | `id`, `mode`, `dry_run`, `targets`, `warnings`, `created_at` | Assessment run metadata and scope context |
-| `assets` | `id`, `scan_id`, `ip`, `hostname`, `ports`, `services` | Normalized recon observations |
+| `scan_runs` | `id`, `tenant_id`, `mode`, `dry_run`, `targets`, `warnings`, `created_at` | Tenant-scoped assessment and discovery run metadata |
+| `discovery_jobs` | `id`, `tenant_id`, `actor`, `profile`, `status`, `dry_run`, `targets`, `scan_id`, `expires_at`, timestamps | Protected asynchronous job lifecycle with bounded retention; actor is captured from the authenticated principal |
+| `assets` | `id`, `tenant_id`, `scan_id`, `ip`, `hostname`, `ports`, `services`, `provenance_json`, `observation_hash`, `first_seen_at`, `last_seen_at` | Idempotently reconciled normalized observations conforming to the shared asset identity contract |
 | `findings` | `id`, `severity`, `asset_id`, `technique_id`, `cvss_score`, `cvss_vector`, `evidence` | Risk-bearing observations and remediation context |
 | `graph_nodes` | `id`, `label`, `kind`, `criticality`, `metadata_json` | Attack-path graph vertices |
 | `graph_edges` | `source`, `target`, `technique_id`, `weight`, `rationale` | Explainable graph relationships |
@@ -13,7 +14,7 @@ The MVP uses SQLite for portability and keeps the schema compatible with Postgre
 | `detection_observations` | `purple_run_id`, `technique_id`, `detected`, `evidence_count`, `alert_ids` | Per-technique coverage and gaps |
 | `audit_events` | `id`, `operation`, `actor`, `details`, `digest`, `created_at` | Searchable database copy of the append-only audit chain |
 
-The current API implementation writes the append-only JSONL audit stream directly and prepares the relational schema for the next persistence increment. This split makes the audit path available even if a database migration fails, while still allowing dashboards and reports to query structured history in v1.
+The current API implementation writes the append-only JSONL audit stream directly and uses additive migrations for discovery job expiry, authenticated actor capture, asset provenance, observation hashes, and first/last-seen timestamps. Job retention is per tenant and removes only expired or over-capacity terminal job metadata; normalized assets and audit records are retained for evidence continuity. Fresh local SQLite environments also receive the new columns through SQLAlchemy metadata creation.
 
 ## Risk fields
 

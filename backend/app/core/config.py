@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     recon_timeout_seconds: int = 30
     recon_max_workers: int = 2
     discovery_max_jobs_per_minute: int = 30
+    discovery_job_retention_hours: int = 24
+    discovery_job_retention_max: int = 500
     discovery_api_token: str = ""
     discovery_tenant_id: str = "lab"
     audit_log_path: str = "./data/audit.jsonl"

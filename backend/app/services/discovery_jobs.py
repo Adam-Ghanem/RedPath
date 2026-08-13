@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 
 from app.core.audit import AuditLogger
 from app.db.models import Asset, DiscoveryJob, ScanRun, utcnow
-from app.schemas.contracts import DiscoveryJobStatus, InventoryAsset
+from app.models.domain import Asset as SharedAsset
+from app.schemas.contracts import AssetProvenance, DiscoveryJobStatus, InventoryAsset
 from app.services.recon import ReconService
 
 
@@ -25,7 +27,7 @@ class DiscoveryRateLimitExceeded(ValueError):
 
 
 class DiscoveryJobService:
-    """Queue bounded discovery work and persist only normalized, non-sensitive results."""
+    """Queue bounded discovery work and reconcile normalized assets idempotently."""
 
     def __init__(
         self,
@@ -35,7 +37,13 @@ class DiscoveryJobService:
         *,
         max_workers: int = 2,
         max_jobs_per_minute: int = 30,
+        retention_hours: int = 24,
+        retention_max: int = 500,
     ) -> None:
+        if retention_hours < 1:
+            raise ValueError("retention_hours must be positive")
+        if retention_max < 1:
+            raise ValueError("retention_max must be positive")
         self.recon_service = recon_service
         self.session_factory = session_factory
         self.audit = audit
@@ -44,36 +52,63 @@ class DiscoveryJobService:
             thread_name_prefix="redpath-discovery",
         )
         self.max_jobs_per_minute = max(1, max_jobs_per_minute)
+        self.retention_hours = retention_hours
+        self.retention_max = retention_max
         self._submission_times: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
 
-    def submit(self, tenant_id: str, targets: list[str], profile: str, dry_run: bool) -> DiscoveryJobStatus:
+    def submit(
+        self,
+        tenant_id: str,
+        targets: list[str],
+        profile: str,
+        dry_run: bool,
+        *,
+        actor: str = "system",
+    ) -> DiscoveryJobStatus:
         normalized_targets = self.recon_service.scope.validate_targets(targets)
         self._check_submission_rate(tenant_id)
         # Planning validates the allow-list and creates only fixed argv lists; it never accepts shell text.
         self.recon_service.plan(normalized_targets, profile)
         job_id = str(uuid.uuid4())
         created_at = utcnow()
+        scan_id = self._scan_id(job_id)
         with self.session_factory() as session:
             job = DiscoveryJob(
                 id=job_id,
                 tenant_id=tenant_id,
+                actor=actor,
                 profile=profile,
                 status="queued",
                 dry_run=dry_run,
                 targets=normalized_targets,
+                scan_id=scan_id,
                 progress_percent=0,
                 created_at=created_at,
+                expires_at=created_at + timedelta(hours=self.retention_hours),
             )
             session.add(job)
             session.commit()
+        pruned_count = self._prune(tenant_id)
+        if pruned_count:
+            self.audit.record(
+                "discovery.jobs_pruned",
+                {"tenant_id": tenant_id, "count": pruned_count},
+                actor=actor,
+            )
         self.audit.record(
             "discovery.job_queued",
-            {"job_id": job_id, "tenant_id": tenant_id, "target_count": len(normalized_targets), "profile": profile},
-            actor="discovery-api",
+            {
+                "job_id": job_id,
+                "tenant_id": tenant_id,
+                "target_count": len(normalized_targets),
+                "profile": profile,
+                "dry_run": dry_run,
+            },
+            actor=actor,
         )
         self.executor.submit(self._execute, job_id)
-        return self.get(tenant_id, job_id)
+        return self.get(tenant_id, job_id, actor=actor)
 
     def _check_submission_rate(self, tenant_id: str) -> None:
         now = time.monotonic()
@@ -89,58 +124,69 @@ class DiscoveryJobService:
     def _execute(self, job_id: str) -> None:
         with self.session_factory() as session:
             job = session.get(DiscoveryJob, job_id)
-            if job is None:
+            if job is None or job.status in {"completed", "failed", "running"}:
                 return
             job.status = "running"
             job.started_at = utcnow()
             job.progress_percent = 10
             session.commit()
             tenant_id = job.tenant_id
+            actor = job.actor
             targets = list(job.targets)
             profile = job.profile
             dry_run = job.dry_run
+            scan_id = job.scan_id or self._scan_id(job.id)
+            if job.scan_id is None:
+                job.scan_id = scan_id
+                session.commit()
 
         try:
-            result = self.recon_service.run(targets, profile, dry_run)
+            result = self.recon_service.run(targets, profile, dry_run, scan_id=scan_id)
+            completed_at = utcnow()
             with self.session_factory() as session:
-                scan = ScanRun(
-                    id=result.scan_id,
-                    tenant_id=tenant_id,
-                    mode=profile,
-                    dry_run=result.dry_run,
-                    targets=result.targets,
-                    warnings=result.warnings,
-                    created_at=utcnow(),
+                scan = session.get(ScanRun, result.scan_id)
+                if scan is None:
+                    scan = ScanRun(
+                        id=result.scan_id,
+                        tenant_id=tenant_id,
+                        mode=profile,
+                        dry_run=result.dry_run,
+                        targets=result.targets,
+                        warnings=result.warnings,
+                        created_at=completed_at,
+                    )
+                    session.add(scan)
+                elif scan.tenant_id != tenant_id:
+                    raise RuntimeError("scan tenant mismatch")
+
+                for observation in self._merge_observations(result.assets):
+                    self._reconcile_asset(
+                        session,
+                        tenant_id=tenant_id,
+                        actor=actor,
+                        job_id=job_id,
+                        scan_id=result.scan_id,
+                        dry_run=result.dry_run,
+                        observation=observation,
+                    observed_at=completed_at,
                 )
-                session.add(scan)
-                for observation in result.assets:
-                    asset_id = self._asset_id(tenant_id, observation.ip)
-                    asset = session.get(Asset, asset_id)
-                    if asset is None:
-                        asset = Asset(
-                            id=asset_id,
-                            tenant_id=tenant_id,
-                            scan_id=result.scan_id,
-                            ip=observation.ip,
-                        )
-                        session.add(asset)
-                    asset.tenant_id = tenant_id
-                    asset.scan_id = result.scan_id
-                    asset.ip = observation.ip
-                    asset.hostname = observation.hostname
-                    asset.ports = sorted(set(observation.ports))
-                    asset.services = sorted(set(observation.services))
-                    asset.metadata_json = {"tenant_id": tenant_id, "source": observation.source}
 
                 job = session.get(DiscoveryJob, job_id)
-                if job is None:
+                if job is None or job.tenant_id != tenant_id:
                     return
                 job.status = "completed"
                 job.scan_id = result.scan_id
                 job.result_json = result.model_dump(mode="json")
                 job.progress_percent = 100
-                job.completed_at = utcnow()
+                job.completed_at = completed_at
                 session.commit()
+            pruned_count = self._prune(tenant_id)
+            if pruned_count:
+                self.audit.record(
+                    "discovery.jobs_pruned",
+                    {"tenant_id": tenant_id, "count": pruned_count},
+                    actor=actor,
+                )
             self.audit.record(
                 "discovery.job_completed",
                 {
@@ -148,8 +194,9 @@ class DiscoveryJobService:
                     "tenant_id": tenant_id,
                     "scan_id": result.scan_id,
                     "asset_count": len(result.assets),
+                    "dry_run": result.dry_run,
                 },
-                actor="discovery-worker",
+                actor=actor,
             )
         except Exception as exc:  # worker failures are persisted and never escape into the executor
             safe_error = f"{type(exc).__name__}: discovery worker failed"
@@ -164,58 +211,238 @@ class DiscoveryJobService:
             self.audit.record(
                 "discovery.job_failed",
                 {"job_id": job_id, "tenant_id": tenant_id, "error": safe_error},
-                actor="discovery-worker",
+                actor=actor,
             )
 
-    def get(self, tenant_id: str, job_id: str) -> DiscoveryJobStatus:
+    def get(self, tenant_id: str, job_id: str, *, actor: str = "system") -> DiscoveryJobStatus:
         with self.session_factory() as session:
             job = session.get(DiscoveryJob, job_id)
-            if job is None or job.tenant_id != tenant_id:
+            if (
+                job is None
+                or job.tenant_id != tenant_id
+                or DiscoveryJobService._is_expired(job.expires_at, utcnow())
+            ):
                 raise DiscoveryJobNotFound(job_id)
-            return self._to_status(job)
+            result = self._to_status(job)
+        self.audit.record("discovery.job_viewed", {"job_id": job_id, "tenant_id": tenant_id}, actor=actor)
+        return result
 
-    def list(self, tenant_id: str, limit: int = 20) -> list[DiscoveryJobStatus]:
+    def list(self, tenant_id: str, limit: int = 20, *, actor: str = "system") -> list[DiscoveryJobStatus]:
         bounded_limit = max(1, min(limit, 100))
+        now = utcnow()
         with self.session_factory() as session:
             statement = (
                 select(DiscoveryJob)
-                .where(DiscoveryJob.tenant_id == tenant_id)
+                .where(
+                    DiscoveryJob.tenant_id == tenant_id,
+                    or_(DiscoveryJob.expires_at.is_(None), DiscoveryJob.expires_at >= now),
+                )
                 .order_by(DiscoveryJob.created_at.desc())
                 .limit(bounded_limit)
             )
-            return [self._to_status(job) for job in session.scalars(statement).all()]
+            result = [self._to_status(job) for job in session.scalars(statement).all()]
+        self.audit.record(
+            "discovery.jobs_viewed",
+            {"tenant_id": tenant_id, "limit": bounded_limit, "result_count": len(result)},
+            actor=actor,
+        )
+        return result
 
-    def inventory(self, tenant_id: str, limit: int = 100) -> list[InventoryAsset]:
+    def inventory(self, tenant_id: str, limit: int = 100, *, actor: str = "system") -> list[InventoryAsset]:
         bounded_limit = max(1, min(limit, 500))
         with self.session_factory() as session:
             statement = (
-                select(Asset, DiscoveryJob)
-                .join(DiscoveryJob, DiscoveryJob.scan_id == Asset.scan_id)
-                .where(DiscoveryJob.tenant_id == tenant_id, Asset.tenant_id == tenant_id)
+                select(Asset, ScanRun)
+                .join(ScanRun, ScanRun.id == Asset.scan_id)
+                .where(Asset.tenant_id == tenant_id, ScanRun.tenant_id == tenant_id)
                 .order_by(Asset.ip.asc())
                 .limit(bounded_limit)
             )
             rows = session.execute(statement).all()
-            return [
-                InventoryAsset(
-                    asset_id=asset.id,
-                    tenant_id=tenant_id,
-                    display_name=asset.hostname or asset.ip,
-                    ip=asset.ip,
-                    hostname=asset.hostname,
-                    ports=list(asset.ports or []),
-                    services=list(asset.services or []),
-                    scan_id=asset.scan_id,
-                    source="recon",
-                    discovered_at=job.completed_at or job.created_at,
-                )
-                for asset, job in rows
-            ]
+            result = [self._to_inventory(asset, scan, tenant_id) for asset, scan in rows]
+        self.audit.record(
+            "inventory.assets_viewed",
+            {"tenant_id": tenant_id, "limit": bounded_limit, "result_count": len(result)},
+            actor=actor,
+        )
+        return result
+
+    def _prune(self, tenant_id: str) -> int:
+        now = utcnow()
+        removed = 0
+        with self.session_factory() as session:
+            expired_ids = list(
+                session.scalars(
+                    select(DiscoveryJob.id).where(
+                        DiscoveryJob.tenant_id == tenant_id,
+                        DiscoveryJob.status.in_(["completed", "failed"]),
+                        DiscoveryJob.expires_at.is_not(None),
+                        DiscoveryJob.expires_at < now,
+                    )
+                ).all()
+            )
+            if expired_ids:
+                removed += session.execute(delete(DiscoveryJob).where(DiscoveryJob.id.in_(expired_ids))).rowcount or 0
+
+            retained_ids = list(
+                session.scalars(
+                    select(DiscoveryJob.id)
+                    .where(
+                        DiscoveryJob.tenant_id == tenant_id,
+                        DiscoveryJob.status.in_(["completed", "failed"]),
+                    )
+                    .order_by(DiscoveryJob.created_at.desc())
+                    .offset(self.retention_max)
+                ).all()
+            )
+            if retained_ids:
+                removed += session.execute(delete(DiscoveryJob).where(DiscoveryJob.id.in_(retained_ids))).rowcount or 0
+            if removed:
+                session.commit()
+        return removed
+
+    @staticmethod
+    def _reconcile_asset(
+        session,
+        *,
+        tenant_id: str,
+        actor: str,
+        job_id: str,
+        scan_id: str,
+        dry_run: bool,
+        observation,
+        observed_at: datetime,
+    ) -> None:
+        asset_id = DiscoveryJobService._asset_id(tenant_id, observation.ip)
+        observation_hash = DiscoveryJobService._observation_hash(tenant_id, observation)
+        shared_asset = SharedAsset(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            display_name=observation.hostname or observation.ip,
+            asset_type="host",
+        )
+        provenance = {
+            "source": observation.source,
+            "scan_id": scan_id,
+            "job_id": job_id,
+            "actor": actor,
+            "observed_at": observed_at.isoformat(),
+            "dry_run": dry_run,
+            "observation_hash": observation_hash,
+        }
+        asset = session.get(Asset, shared_asset.asset_id)
+        if asset is None:
+            asset = Asset(
+                id=shared_asset.asset_id,
+                tenant_id=shared_asset.tenant_id,
+                scan_id=scan_id,
+                ip=observation.ip,
+                first_seen_at=observed_at,
+            )
+            session.add(asset)
+        elif asset.tenant_id != tenant_id:
+            raise RuntimeError("asset tenant mismatch")
+        asset.scan_id = scan_id
+        asset.ip = observation.ip
+        asset.hostname = observation.hostname
+        asset.ports = sorted(set(observation.ports))
+        asset.services = sorted(set(observation.services))
+        asset.metadata_json = {"tenant_id": tenant_id, "source": observation.source}
+        asset.provenance_json = provenance
+        asset.observation_hash = observation_hash
+        asset.first_seen_at = asset.first_seen_at or observed_at
+        asset.last_seen_at = observed_at
+
+    @staticmethod
+    def _merge_observations(observations):
+        merged = {}
+        for observation in observations:
+            current = merged.get(observation.ip)
+            if current is None:
+                merged[observation.ip] = observation
+                continue
+            current.ports = sorted(set(current.ports + observation.ports))
+            current.services = sorted(set(current.services + observation.services))
+            current.hostname = observation.hostname or current.hostname
+        return list(merged.values())
 
     @staticmethod
     def _asset_id(tenant_id: str, ip: str) -> str:
         digest = hashlib.sha256(f"{tenant_id}:{ip}".encode("utf-8")).hexdigest()[:32]
         return f"asset-{digest}"
+
+    @staticmethod
+    def _scan_id(job_id: str) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"redpath:discovery:{job_id}"))
+
+    @staticmethod
+    def _observation_hash(tenant_id: str, observation) -> str:
+        payload = {
+            "tenant_id": tenant_id,
+            "ip": observation.ip,
+            "hostname": observation.hostname,
+            "ports": sorted(set(observation.ports)),
+            "services": sorted(set(observation.services)),
+            "source": observation.source,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _is_expired(expires_at: datetime | None, now: datetime) -> bool:
+        if expires_at is None:
+            return False
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at < now
+
+    @staticmethod
+    def _to_inventory(asset: Asset, scan: ScanRun, tenant_id: str) -> InventoryAsset:
+        provenance_data = dict(asset.provenance_json or {})
+        observed_at = asset.last_seen_at or scan.created_at
+        provenance_data.setdefault("source", "recon")
+        provenance_data.setdefault("scan_id", asset.scan_id)
+        provenance_data.setdefault("job_id", "legacy")
+        provenance_data.setdefault("actor", "system")
+        provenance_data.setdefault("observed_at", observed_at.isoformat())
+        provenance_data.setdefault("dry_run", scan.dry_run)
+        legacy_payload = {
+            "tenant_id": tenant_id,
+            "ip": asset.ip,
+            "hostname": asset.hostname,
+            "ports": sorted(set(asset.ports or [])),
+            "services": sorted(set(asset.services or [])),
+            "source": provenance_data["source"],
+        }
+        provenance_data.setdefault(
+            "observation_hash",
+            hashlib.sha256(
+                json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+        )
+        provenance = AssetProvenance.model_validate(provenance_data)
+        shared_asset = SharedAsset(
+            asset_id=asset.id,
+            tenant_id=tenant_id,
+            display_name=asset.hostname or asset.ip,
+            asset_type="host",
+        )
+        return InventoryAsset(
+            asset=shared_asset,
+            asset_id=shared_asset.asset_id,
+            tenant_id=shared_asset.tenant_id,
+            display_name=shared_asset.display_name,
+            asset_type="host",
+            ip=asset.ip,
+            hostname=asset.hostname,
+            ports=list(asset.ports or []),
+            services=list(asset.services or []),
+            scan_id=asset.scan_id,
+            source=provenance.source,
+            discovered_at=observed_at,
+            first_seen_at=asset.first_seen_at or scan.created_at,
+            last_seen_at=observed_at,
+            provenance=provenance,
+        )
 
     @staticmethod
     def _to_status(job: DiscoveryJob) -> DiscoveryJobStatus:

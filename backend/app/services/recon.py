@@ -36,14 +36,22 @@ class ReconService:
             commands.append(ReconCommand(tool="nmap", argv=[*argv, target], purpose=purpose))
         return commands
 
-    def run(self, targets: list[str], profile: str = "safe", dry_run: bool = True) -> ReconResult:
+    def run(
+        self,
+        targets: list[str],
+        profile: str = "safe",
+        dry_run: bool = True,
+        *,
+        scan_id: str | None = None,
+    ) -> ReconResult:
         commands = self.plan(targets, profile)
+        resolved_scan_id = scan_id or str(uuid.uuid4())
         warnings: list[str] = []
         assets: list[AssetObservation] = []
         if dry_run:
             warnings.append("Dry-run enabled: no network command was executed.")
             return ReconResult(
-                scan_id=str(uuid.uuid4()),
+                scan_id=resolved_scan_id,
                 dry_run=True,
                 targets=self.scope.validate_targets(targets),
                 commands=commands,
@@ -70,7 +78,7 @@ class ReconService:
             except subprocess.TimeoutExpired:
                 warnings.append(f"{command.tool} timed out after {self.timeout_seconds}s")
         return ReconResult(
-            scan_id=str(uuid.uuid4()),
+            scan_id=resolved_scan_id,
             dry_run=False,
             targets=self.scope.validate_targets(targets),
             commands=commands,
