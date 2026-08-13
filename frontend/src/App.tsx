@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { coverageByTactic, findings, graphNodes, mitreCoverage, overallCoverage, pathById, scenarios, type Severity } from "./data/redpathDemo";
+import AnalystConsole from "./features/analyst-console/AnalystConsole";
 
 const severityOrder: Severity[] = ["Critical", "High", "Medium", "Low"];
 
@@ -42,6 +43,7 @@ function ReferenceBoard() {
 }
 
 export default function Home() {
+  const [showAnalystConsole, setShowAnalystConsole] = useState(() => window.location.hash === "#analyst-console");
   const [selectedPathId, setSelectedPathId] = useState("path-service-ticket");
   const [selectedAssetId, setSelectedAssetId] = useState("SVC-BACKUP");
   const [selectedScenarioId, setSelectedScenarioId] = useState("service-ticket");
@@ -64,6 +66,10 @@ export default function Home() {
     document.getElementById("explore")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  if (showAnalystConsole) {
+    return <AnalystConsole />;
+  }
+
   return (
     <div className="redpath-app">
       <header className="site-header">
@@ -71,7 +77,7 @@ export default function Home() {
         <nav className="site-nav" aria-label="Primary navigation">
           <a href="#findings">Evidence</a><a href="#explore">Path analysis</a><a href="#scenarios">Remediation</a>
         </nav>
-        <a className="header-cta" href="#explore">Case RP-101</a>
+        <button className="header-cta" onClick={() => { window.location.hash = "analyst-console"; setShowAnalystConsole(true); }}>Open analyst console</button>
       </header>
 
       <main id="top">
