@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.core.audit import AuditLogger
@@ -70,6 +70,7 @@ from app.schemas.identity import (
     UserCreateRequest,
     UserResponse,
 )
+from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
 from app.services.discovery_jobs import (
@@ -108,6 +109,7 @@ from app.services.identity import (
     InvalidCredentials,
 )
 from app.services.mitre import all_techniques
+from app.services.pcap import PcapFormatError, get_pcap_analysis, list_pcap_analyses, register_pcap_analysis
 from app.services.purple import build_detection_gap_report
 from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
@@ -435,9 +437,51 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         record_audit("evidence.registered", {"evidence_id": result.evidence_id, "sha256": result.sha256})
         return result
 
-    @protected_router.get(
-        "/remediations", response_model=list[RemediationResponse], dependencies=[Depends(permission_dependency("read"))]
-    )
+    @protected_router.post("/pcap/analyses", response_model=PcapAnalysisResponse, status_code=201, dependencies=[Depends(permission_dependency("analyze"))])
+    async def pcap_analysis_create(
+        file: UploadFile = File(...),  # noqa: B008
+        campaign_id: str | None = Form(default=None),
+    ) -> PcapAnalysisResponse:
+        tenant_id = get_principal().tenant_id
+        file_name = Path(file.filename or "").name
+        if not file_name or file_name != (file.filename or "") or len(file_name) > 255:
+            raise HTTPException(status_code=400, detail="file name must be a single safe path component")
+        if not file_name.lower().endswith((".pcap", ".pcapng")):
+            raise HTTPException(status_code=415, detail="only .pcap and .pcapng evidence is accepted")
+        data = await file.read(settings.pcap_max_upload_bytes + 1)
+        if len(data) > settings.pcap_max_upload_bytes:
+            raise HTTPException(status_code=413, detail="PCAP evidence exceeds the configured upload limit")
+        try:
+            result = register_pcap_analysis(data, file_name, tenant_id, campaign_id, session_factory)
+        except PcapFormatError as exc:
+            audit.record("pcap.rejected", {"tenant_id": tenant_id, "file_name": file_name, "reason": str(exc)})
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "pcap.analyzed",
+            {
+                "analysis_id": result.analysis_id,
+                "evidence_id": result.evidence_id,
+                "tenant_id": tenant_id,
+                "sha256": result.sha256,
+                "packet_count": result.packet_count,
+            },
+        )
+        return result
+
+    @protected_router.get("/pcap/analyses", response_model=list[PcapAnalysisSummary], dependencies=[Depends(permission_dependency("read"))])
+    def pcap_analyses(limit: int = 20) -> list[PcapAnalysisSummary]:
+        return list_pcap_analyses(get_principal().tenant_id, session_factory, limit)
+
+    @protected_router.get("/pcap/analyses/{analysis_id}", response_model=PcapAnalysisResponse, dependencies=[Depends(permission_dependency("read"))])
+    def pcap_analysis_detail(analysis_id: str) -> PcapAnalysisResponse:
+        try:
+            return get_pcap_analysis(analysis_id, get_principal().tenant_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @protected_router.get("/remediations", response_model=list[RemediationResponse], dependencies=[Depends(permission_dependency("read"))])
     def remediations(campaign_id: str | None = None) -> list[RemediationResponse]:
         return list_remediations(session_factory, campaign_id)
 

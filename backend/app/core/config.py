@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     release: str = "dev"
     auth_bootstrap_token: str = ""
     rate_limit_requests_per_minute: int = 120
+    pcap_max_upload_bytes: int = 50 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

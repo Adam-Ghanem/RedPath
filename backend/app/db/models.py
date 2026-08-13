@@ -204,6 +204,28 @@ class EvidenceItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PcapAnalysis(Base):
+    __tablename__ = "pcap_analyses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
+    file_name: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    file_size: Mapped[int] = mapped_column(Integer)
+    capture_format: Mapped[str] = mapped_column(String(16))
+    packet_count: Mapped[int] = mapped_column(Integer, default=0)
+    first_packet_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_packet_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    protocol_counts: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
+    endpoints: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    dns_queries: Mapped[list[str]] = mapped_column(JSON, default=list)
+    observations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class RemediationItem(Base):
     __tablename__ = "remediation_items"
 
