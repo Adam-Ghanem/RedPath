@@ -42,6 +42,7 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | POST | `/api/v1/siem/telemetry/ingest` | Retrieve and persist redacted, tenant-scoped Wazuh projections | RBAC-protected read-only external query; bounded window; audit logged |
 | GET | `/api/v1/siem/telemetry` | Read redacted local telemetry projections | RBAC-protected; server-derived tenant predicate; audit logged |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
+| POST | `/api/v1/attack-paths/analyze` | Rank tenant-scoped modeled paths and link assets, evidence, and remediation priorities | Protected `analyze` permission; server-filtered inventory/evidence references; aggregate-only audit; no external mutation |
 | POST | `/api/v1/purple/analyze` | Compare expected techniques against Wazuh-style alerts | Accepts imported evidence; no rule changes |
 | POST | `/api/v1/reports/pdf` | Generate a local PDF from findings and optional coverage | No external side effect |
 | POST | `/api/v1/pcap/analyses` | Analyze one offline PCAP or PCAP-NG upload | Role-gated, tenant-scoped, bounded upload; no raw bytes persisted |
@@ -106,6 +107,31 @@ A campaign is a bounded assessment context with an owner and scope snapshot. Evi
 ## Offline PCAP forensics
 
 The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations and flow/DNS summaries in memory, pseudonymize IP and DNS identifiers with a server-held HMAC salt, register the digest in the existing evidence workflow, and persist only normalized metadata. Raw packet bytes and application payloads are not returned or persisted. Upload requires an authenticated principal with the `analyze` permission, while reads require the `read` permission; the tenant and actor are derived from the authenticated session. The linked evidence view joins only records belonging to the authenticated tenant. See [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, and parser coverage.
+
+## Attack-path analysis
+
+`POST /api/v1/attack-paths/analyze` accepts only caller-supplied modeled nodes and edges. Each node may carry an inventory `asset_id`, and each edge may carry stable `evidence_ids`. The protected route derives the tenant and actor from the authenticated bearer session, verifies referenced assets and evidence belong to that tenant, and returns a deterministic `analysis_id`, `graph_fingerprint`, tenant-scoped `path_id` values, explainable risk factors, linked identifiers, remediation priorities, and persistence-ready remediation links.
+
+The result is read-only. It does not create remediation records, modify assets or evidence, access external systems, or expose raw evidence, packet, telemetry, node-metadata, or edge-rationale payloads. A server-side workflow may use the returned links to create reviewable remediation items through the existing RBAC and audit boundary.
+
+```json
+{
+  "schema_version": "1.0",
+  "tenant_id": "tenant-from-authenticated-session",
+  "nodes": [
+    {"id": "entry", "label": "Authorized entry", "kind": "asset", "asset_id": "asset-123", "is_entry_point": true},
+    {"id": "crown", "label": "Protected identity", "kind": "privilege", "asset_id": "asset-456", "is_crown_jewel": true}
+  ],
+  "edges": [
+    {"source": "entry", "target": "crown", "evidence_ids": ["evidence-789"], "likelihood": 6, "impact": 8, "stealth": 4}
+  ],
+  "max_hops": 8,
+  "max_paths": 100,
+  "critical_threshold": 7
+}
+```
+
+`analysis_id` and `graph_fingerprint` are stable for the same tenant-scoped graph and bounded analysis parameters. A path explanation includes asset and evidence references plus the remediation priority and rationale. Resource limits cap graph size and path enumeration; truncated results report a warning and must not be treated as exhaustive.
 
 ## Purple-team request
 

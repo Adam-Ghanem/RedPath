@@ -21,7 +21,7 @@ from app.core.config import Settings
 from app.core.observability import MetricsRegistry
 from app.core.request_context import current_actor, get_principal
 from app.core.scope import ScopePolicy, ScopeViolation
-from app.db.models import create_session_factory
+from app.db.models import Asset, EvidenceItem, create_session_factory
 from app.kernel.contracts import (
     CapabilityNegotiation,
     CapabilityNegotiationRequest,
@@ -105,7 +105,7 @@ from app.schemas.identity import (
 )
 from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary, PcapEvidenceView
 from app.services.ad_detection import detect_ad_findings
-from app.services.attack_path_risk import analyze_attack_path_risk
+from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
 from app.services.correlation import correlate_findings
 from app.services.detection_framework import DetectionRuleCatalog
 from app.services.discovery_jobs import (
@@ -1163,18 +1163,41 @@ def build_router(
         principal = get_principal()
         if request.tenant_id != principal.tenant_id:
             raise HTTPException(status_code=403, detail="Attack-path tenant does not match authenticated tenant")
+        with session_factory() as session:
+            authorized_asset_ids = {
+                asset_id
+                for (asset_id,) in session.query(Asset.id).filter(Asset.tenant_id == principal.tenant_id).all()
+            }
+            authorized_evidence_ids = {
+                evidence_id
+                for (evidence_id,) in session.query(EvidenceItem.id)
+                .filter(EvidenceItem.tenant_id == principal.tenant_id)
+                .all()
+            }
         try:
-            result = analyze_attack_path_risk(request)
+            result = analyze_attack_path_risk(
+                request,
+                authorized_asset_ids=authorized_asset_ids,
+                authorized_evidence_ids=authorized_evidence_ids,
+            )
+            persistence_record = to_persistence_record(result, actor_id=principal.user_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         record_audit(
             "attack_paths.analyzed",
             {
                 "tenant_id": request.tenant_id,
+                "analysis_id": persistence_record.analysis_id,
+                "graph_fingerprint": persistence_record.graph_fingerprint,
                 "node_count": result.graph_summary.node_count,
                 "edge_count": result.graph_summary.edge_count,
                 "path_count": result.graph_summary.viable_path_count,
                 "critical_path_count": result.graph_summary.critical_path_count,
+                "asset_count": len(result.asset_ids),
+                "evidence_count": len(result.evidence_ids),
+                "remediation_link_count": len(result.remediation_links),
             },
         )
         return result

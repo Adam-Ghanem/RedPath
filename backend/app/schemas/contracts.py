@@ -124,6 +124,7 @@ class AttackNode(BaseModel):
     zone: Literal["on_prem", "cloud", "hybrid", "unknown"] = "unknown"
     is_entry_point: bool = False
     is_crown_jewel: bool = False
+    asset_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AttackEdge(BaseModel):
@@ -148,6 +149,7 @@ class AttackEdge(BaseModel):
     hardening_action: str = "Review and harden the control represented by this edge."
     estimated_effort_hours: int = Field(default=4, ge=1, le=10_000)
     hybrid: bool = False
+    evidence_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 class RiskFactor(BaseModel):
@@ -163,6 +165,10 @@ class RiskExplanation(BaseModel):
     factors: list[RiskFactor] = Field(min_length=1)
     assumptions: list[str] = Field(default_factory=list)
     mitigation: list[str] = Field(default_factory=list)
+    asset_ids: list[str] = Field(default_factory=list, max_length=200)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=200)
+    remediation_priority: Literal["low", "medium", "high", "critical"] = "medium"
+    remediation_rationale: str = Field(default="", max_length=2000)
 
 
 class RankedAttackPath(BaseModel):
@@ -179,6 +185,10 @@ class RankedAttackPath(BaseModel):
     mitre_techniques: list[str] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)
     is_hybrid: bool = False
+    asset_ids: list[str] = Field(default_factory=list, max_length=200)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=200)
+    remediation_priority: Literal["low", "medium", "high", "critical"] = "medium"
+    remediation_ids: list[str] = Field(default_factory=list, max_length=200)
     explanation: RiskExplanation
 
 
@@ -191,6 +201,9 @@ class ChokePoint(BaseModel):
     hardening_action: str = Field(min_length=1, max_length=2000)
     estimated_effort_hours: int = Field(ge=1, le=10_000)
     rationale: str = Field(min_length=1, max_length=2000)
+    asset_id: str | None = Field(default=None, max_length=128)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=200)
+    remediation_priority: Literal["low", "medium", "high", "critical"] = "medium"
 
 
 class GraphSummary(BaseModel):
@@ -219,6 +232,8 @@ class AttackPathAnalysisRequest(BaseModel):
 class AttackPathAnalysisResponse(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     tenant_id: str
+    analysis_id: str
+    graph_fingerprint: str
     graph_summary: GraphSummary
     entry_points: list[str]
     crown_jewel_nodes: list[str]
@@ -226,7 +241,40 @@ class AttackPathAnalysisResponse(BaseModel):
     choke_points: list[ChokePoint]
     cloud_paths: list[str]
     unreachable_crown_jewels: list[str]
+    asset_ids: list[str] = Field(default_factory=list, max_length=500)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=500)
+    remediation_priorities: dict[str, str] = Field(default_factory=dict, max_length=500)
+    remediation_links: list["AttackPathRemediationLink"] = Field(default_factory=list, max_length=500)
     warnings: list[str] = Field(default_factory=list)
+
+
+class AttackPathRemediationLink(BaseModel):
+    """Stable, tenant-scoped link ready for persistence or remediation queue creation."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    remediation_link_id: str
+    analysis_id: str
+    tenant_id: str
+    path_id: str
+    asset_ids: list[str] = Field(default_factory=list, max_length=200)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=200)
+    priority: Literal["low", "medium", "high", "critical"]
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class AttackPathAnalysisRecord(BaseModel):
+    """Persistence-ready aggregate; actor identity is supplied by the server boundary."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    analysis_id: str
+    tenant_id: str
+    actor_id: str
+    graph_fingerprint: str
+    path_ids: list[str] = Field(default_factory=list, max_length=500)
+    asset_ids: list[str] = Field(default_factory=list, max_length=500)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=500)
+    remediation_links: list[AttackPathRemediationLink] = Field(default_factory=list, max_length=500)
+    created_at: datetime
 
 
 class GraphRequest(BaseModel):

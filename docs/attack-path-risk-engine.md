@@ -61,6 +61,25 @@ A choke point is an internal node appearing in one or more critical paths. Its p
 | Analyst console | `ranked_paths`, `cloud_paths`, `unreachable_crown_jewels`, and `warnings` | Render a ranked, explainable view without exposing raw sensitive payloads in audit logs. |
 | Audit and observability | Aggregate route audit event | Track tenant, graph size, viable paths, and critical paths. |
 
+## Asset, evidence, and remediation linkage
+
+`AttackNode.asset_id` references the tenant-scoped inventory identity returned by `/api/v1/inventory/assets`. The protected analysis route resolves the authenticated tenant’s inventory server-side and rejects graph references to assets outside that inventory. The shared asset contract remains unchanged.
+
+`AttackEdge.evidence_ids` contains stable references to reviewed evidence records. The protected route resolves those identifiers against the authenticated tenant’s evidence inventory before returning a result. The service returns evidence IDs and aggregate counts only; it does not return evidence notes, packet contents, telemetry payloads, or other raw sensitive data.
+
+Each ranked path receives a stable tenant-scoped `path_id`, an `analysis_id`, and a canonical `graph_fingerprint`. The response carries `asset_ids`, `evidence_ids`, `remediation_priority`, and an explanation of why the priority follows the modeled risk level. `remediation_links` are persistence-ready records containing only tenant, path, asset, evidence, priority, and rationale references. They do not create or mutate remediation records. A server-side adapter may convert these links into the existing remediation workflow after review while preserving the authenticated actor identity.
+
+| Contract | Stability and security behavior |
+| --- | --- |
+| `analysis_id` | Deterministic for the tenant, graph fingerprint, and bounded analysis parameters |
+| `graph_fingerprint` | Canonical hash of tenant-scoped graph nodes and edges; no raw payload is logged |
+| `path_id` | Tenant-scoped hash of the ordered path nodes; stable across repeated analysis of the same graph |
+| `asset_ids` | Only inventory IDs authorized for the current tenant are accepted |
+| `evidence_ids` | Only evidence IDs authorized for the current tenant are accepted and returned |
+| `remediation_links` | Read-only, persistence-ready priority/rationale records; no remote mutation or automatic ticket creation |
+
+The route records the server-derived user ID in the in-memory persistence-ready record and uses aggregate-only audit details. Client request fields never determine actor, owner, reviewer, approver, or tenant identity.
+
 ## Validation
 
 Focused tests are in `backend/tests/test_attack_path_risk.py`. They cover weighted scoring and explanations, deterministic ranking, hybrid path labeling, choke-point priority, unreachable crown-jewel reporting, endpoint validation, and resource-limit validation. Existing graph, correlation, API, and platform-contract tests remain part of the regression suite.
