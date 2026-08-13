@@ -22,7 +22,7 @@ import {
   TerminalSquare,
   UsersRound,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { coverageByTactic, findings, graphNodes, mitreCoverage, overallCoverage, pathById, scenarios, type Severity } from "./data/redpathDemo";
 import AnalystConsole from "./features/analyst-console/AnalystConsole";
 
@@ -43,7 +43,24 @@ function ReferenceBoard() {
 }
 
 export default function Home() {
-  const [showAnalystConsole, setShowAnalystConsole] = useState(() => window.location.hash === "#analyst-console");
+  const [showAnalystConsole, setShowAnalystConsole] = useState(false);
+
+  useEffect(() => {
+    const syncRoute = () => setShowAnalystConsole(window.location.hash === "#analyst-console");
+    syncRoute();
+    window.addEventListener("hashchange", syncRoute);
+    return () => window.removeEventListener("hashchange", syncRoute);
+  }, []);
+
+  const openAnalystConsole = () => {
+    window.location.hash = "analyst-console";
+    setShowAnalystConsole(true);
+  };
+
+  const closeAnalystConsole = () => {
+    window.location.hash = "top";
+    setShowAnalystConsole(false);
+  };
   const [selectedPathId, setSelectedPathId] = useState("path-service-ticket");
   const [selectedAssetId, setSelectedAssetId] = useState("SVC-BACKUP");
   const [selectedScenarioId, setSelectedScenarioId] = useState("service-ticket");
@@ -67,7 +84,7 @@ export default function Home() {
   };
 
   if (showAnalystConsole) {
-    return <AnalystConsole />;
+    return <AnalystConsole onExit={closeAnalystConsole} />;
   }
 
   return (
@@ -75,9 +92,9 @@ export default function Home() {
       <header className="site-header">
         <a className="brand" href="#top" aria-label="RedPath home"><span className="brand-mark"><img className="brand-logo" src="/assets/redpath-red-fang.png" alt="" /></span><span>REDPATH</span><small>v0.1.0</small></a>
         <nav className="site-nav" aria-label="Primary navigation">
-          <a href="#findings">Evidence</a><a href="#explore">Path analysis</a><a href="#scenarios">Remediation</a>
+          <a href="#findings">Evidence</a><a href="#explore">Path analysis</a><a href="#scenarios">Remediation</a><a href="#analyst-console" onClick={(event) => { event.preventDefault(); openAnalystConsole(); }}>Analyst console</a>
         </nav>
-        <button className="header-cta" onClick={() => { window.location.hash = "analyst-console"; setShowAnalystConsole(true); }}>Open analyst console</button>
+        <a className="header-cta" href="#analyst-console" onClick={(event) => { event.preventDefault(); openAnalystConsole(); }}>Open analyst console</a>
       </header>
 
       <main id="top">
