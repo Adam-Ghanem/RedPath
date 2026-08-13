@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 - execution is limited to validated, allow-listed discovery commands.
 import uuid
 from dataclasses import dataclass
 
@@ -55,7 +55,7 @@ class ReconService:
                 warnings.append(f"Tool unavailable; skipped: {command.tool}")
                 continue
             try:
-                completed = subprocess.run(
+                completed = subprocess.run(  # nosec B603 - argv is built after scope validation; shell is never used.
                     command.argv,
                     capture_output=True,
                     text=True,

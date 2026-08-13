@@ -7,7 +7,6 @@ from app.core.config import Settings, get_settings
 from app.core.observability import MetricsRegistry, RequestObservabilityMiddleware, configure_logging
 
 
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
     metrics = MetricsRegistry()

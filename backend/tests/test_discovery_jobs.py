@@ -3,11 +3,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from app.main import create_app
 from app.core.audit import AuditLogger
 from app.core.config import Settings
 from app.core.scope import ScopePolicy
 from app.db.models import create_session_factory
+from app.main import create_app
 from app.schemas.contracts import AssetObservation, ReconResult
 from app.services.discovery_jobs import (
     DiscoveryJobNotFound,

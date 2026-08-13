@@ -11,14 +11,11 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
-    MetaData,
     String,
-    Table,
     Text,
     create_engine,
     inspect,
     text,
-    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -360,7 +357,10 @@ def run_migrations(engine) -> None:
             columns = {column["name"] for column in inspector.get_columns(table_name)}
             if "tenant_id" not in columns:
                 connection.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN tenant_id VARCHAR(128)'))
-            connection.execute(text(f'UPDATE "{table_name}" SET tenant_id = :tenant_id WHERE tenant_id IS NULL'), {"tenant_id": "legacy"})
+            connection.execute(
+                text(f'UPDATE "{table_name}" SET tenant_id = :tenant_id WHERE tenant_id IS NULL'),  # nosec B608 - table_name is selected from the internal _TENANT_TABLES allowlist.
+                {"tenant_id": "legacy"},
+            )
         connection.execute(
             text("INSERT INTO schema_migrations (version, applied_at) VALUES (2, :applied_at)"),
             {"applied_at": utcnow().isoformat()},

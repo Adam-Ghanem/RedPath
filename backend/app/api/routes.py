@@ -437,7 +437,12 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         record_audit("evidence.registered", {"evidence_id": result.evidence_id, "sha256": result.sha256})
         return result
 
-    @protected_router.post("/pcap/analyses", response_model=PcapAnalysisResponse, status_code=201, dependencies=[Depends(permission_dependency("analyze"))])
+    @protected_router.post(
+        "/pcap/analyses",
+        response_model=PcapAnalysisResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
     async def pcap_analysis_create(
         file: UploadFile = File(...),  # noqa: B008
         campaign_id: str | None = Form(default=None),
@@ -470,18 +475,30 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         )
         return result
 
-    @protected_router.get("/pcap/analyses", response_model=list[PcapAnalysisSummary], dependencies=[Depends(permission_dependency("read"))])
+    @protected_router.get(
+        "/pcap/analyses",
+        response_model=list[PcapAnalysisSummary],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def pcap_analyses(limit: int = 20) -> list[PcapAnalysisSummary]:
         return list_pcap_analyses(get_principal().tenant_id, session_factory, limit)
 
-    @protected_router.get("/pcap/analyses/{analysis_id}", response_model=PcapAnalysisResponse, dependencies=[Depends(permission_dependency("read"))])
+    @protected_router.get(
+        "/pcap/analyses/{analysis_id}",
+        response_model=PcapAnalysisResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def pcap_analysis_detail(analysis_id: str) -> PcapAnalysisResponse:
         try:
             return get_pcap_analysis(analysis_id, get_principal().tenant_id, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @protected_router.get("/remediations", response_model=list[RemediationResponse], dependencies=[Depends(permission_dependency("read"))])
+    @protected_router.get(
+        "/remediations",
+        response_model=list[RemediationResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def remediations(campaign_id: str | None = None) -> list[RemediationResponse]:
         return list_remediations(session_factory, campaign_id)
 
@@ -596,24 +613,42 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
         try:
             return discovery_jobs.submit(principal.tenant_id, requested_targets, request.profile, effective_dry_run)
         except DiscoveryRateLimitExceeded as exc:
-            record_audit("discovery.job_rate_limited", {"tenant_id": principal.tenant_id, "target_count": len(requested_targets)})
+            record_audit(
+                "discovery.job_rate_limited",
+                {"tenant_id": principal.tenant_id, "target_count": len(requested_targets)},
+            )
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except ScopeViolation as exc:
-            record_audit("discovery.job_rejected", {"tenant_id": principal.tenant_id, "targets": requested_targets, "reason": str(exc)})
+            record_audit(
+                "discovery.job_rejected",
+                {"tenant_id": principal.tenant_id, "targets": requested_targets, "reason": str(exc)},
+            )
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    @protected_router.get("/discovery/jobs", response_model=list[DiscoveryJobStatus], dependencies=[Depends(permission_dependency("read"))])
+    @protected_router.get(
+        "/discovery/jobs",
+        response_model=list[DiscoveryJobStatus],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def discovery_job_list(limit: int = 20) -> list[DiscoveryJobStatus]:
         return discovery_jobs.list(get_principal().tenant_id, limit)
 
-    @protected_router.get("/discovery/jobs/{job_id}", response_model=DiscoveryJobStatus, dependencies=[Depends(permission_dependency("read"))])
+    @protected_router.get(
+        "/discovery/jobs/{job_id}",
+        response_model=DiscoveryJobStatus,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def discovery_job_get(job_id: str) -> DiscoveryJobStatus:
         try:
             return discovery_jobs.get(get_principal().tenant_id, job_id)
         except DiscoveryJobNotFound as exc:
             raise HTTPException(status_code=404, detail="Discovery job not found") from exc
 
-    @protected_router.get("/inventory/assets", response_model=list[InventoryAsset], dependencies=[Depends(permission_dependency("read"))])
+    @protected_router.get(
+        "/inventory/assets",
+        response_model=list[InventoryAsset],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def inventory_assets(limit: int = 100) -> list[InventoryAsset]:
         return discovery_jobs.inventory(get_principal().tenant_id, limit)
 

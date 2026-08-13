@@ -4,10 +4,9 @@ import hashlib
 import struct
 from pathlib import Path
 
-from app.api.routes import build_router
 from app.core.config import Settings
+from app.main import create_app
 from app.services.pcap import PcapFormatError, analyze_pcap
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
@@ -72,17 +71,25 @@ def test_analyze_pcap_rejects_truncated_evidence() -> None:
 
 
 def test_pcap_api_persists_metadata_and_enforces_role_and_tenant_isolation(tmp_path: Path) -> None:
-    app = FastAPI()
-    app.include_router(
-        build_router(
-            Settings(
-                database_url=f"sqlite:///{tmp_path / 'redpath.db'}",
-                audit_log_path=str(tmp_path / "audit.jsonl"),
-                pcap_max_upload_bytes=1024 * 1024,
-            )
-        )
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'redpath.db'}",
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        pcap_max_upload_bytes=1024 * 1024,
+        auth_bootstrap_token="pcap-test-bootstrap-token",
     )
-    client = TestClient(app)
+    client = TestClient(create_app(settings))
+    bootstrap = client.post(
+        "/api/v1/auth/bootstrap",
+        json={
+            "bootstrap_token": settings.auth_bootstrap_token,
+            "tenant_slug": "pcap",
+            "tenant_name": "PCAP Test Tenant",
+            "username": "pcap-admin",
+            "password": "pcap-admin-password",
+        },
+    )
+    assert bootstrap.status_code == 201
+    headers = {"Authorization": f"Bearer {bootstrap.json()['access_token']}"}
     data = _pcap_fixture()
 
     unauthorized = client.post(
@@ -95,7 +102,7 @@ def test_pcap_api_persists_metadata_and_enforces_role_and_tenant_isolation(tmp_p
     created = client.post(
         "/api/v1/pcap/analyses",
         files={"file": ("capture.pcap", data, "application/vnd.tcpdump.pcap")},
-        headers={"X-RedPath-Role": "soc_analyst", "X-Tenant-ID": "tenant-a"},
+        headers=headers,
     )
     assert created.status_code == 201, created.text
     payload = created.json()
@@ -105,11 +112,28 @@ def test_pcap_api_persists_metadata_and_enforces_role_and_tenant_isolation(tmp_p
 
     own_list = client.get(
         "/api/v1/pcap/analyses",
-        headers={"X-RedPath-Role": "soc_analyst", "X-Tenant-ID": "tenant-a"},
+        headers=headers,
     )
+    created_tenant = client.post(
+        "/api/v1/auth/tenants",
+        headers=headers,
+        json={
+            "slug": "pcap-other",
+            "name": "PCAP Other Tenant",
+            "admin_username": "pcap-other-admin",
+            "admin_password": "pcap-other-admin-password",
+        },
+    )
+    assert created_tenant.status_code == 201
+    other_login = client.post(
+        "/api/v1/auth/token",
+        json={"tenant_slug": "pcap-other", "username": "pcap-other-admin", "password": "pcap-other-admin-password"},
+    )
+    assert other_login.status_code == 200
+    other_headers = {"Authorization": f"Bearer {other_login.json()['access_token']}"}
     other_list = client.get(
         "/api/v1/pcap/analyses",
-        headers={"X-RedPath-Role": "soc_analyst", "X-Tenant-ID": "tenant-b"},
+        headers=other_headers,
     )
     assert own_list.status_code == 200
     assert len(own_list.json()) == 1
@@ -118,24 +142,31 @@ def test_pcap_api_persists_metadata_and_enforces_role_and_tenant_isolation(tmp_p
 
     cross_tenant_detail = client.get(
         f"/api/v1/pcap/analyses/{payload['analysis_id']}",
-        headers={"X-RedPath-Role": "soc_analyst", "X-Tenant-ID": "tenant-b"},
+        headers=other_headers,
     )
     assert cross_tenant_detail.status_code == 404
 
 
 def test_pcap_api_rejects_oversized_and_non_capture_uploads(tmp_path: Path) -> None:
-    app = FastAPI()
-    app.include_router(
-        build_router(
-            Settings(
-                database_url=f"sqlite:///{tmp_path / 'redpath.db'}",
-                audit_log_path=str(tmp_path / "audit.jsonl"),
-                pcap_max_upload_bytes=32,
-            )
-        )
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'redpath.db'}",
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+        pcap_max_upload_bytes=32,
+        auth_bootstrap_token="pcap-size-test-bootstrap-token",
     )
-    client = TestClient(app)
-    headers = {"X-RedPath-Role": "soc_analyst", "X-Tenant-ID": "tenant-a"}
+    client = TestClient(create_app(settings))
+    bootstrap = client.post(
+        "/api/v1/auth/bootstrap",
+        json={
+            "bootstrap_token": settings.auth_bootstrap_token,
+            "tenant_slug": "pcap-size",
+            "tenant_name": "PCAP Size Tenant",
+            "username": "pcap-size-admin",
+            "password": "pcap-size-admin-password",
+        },
+    )
+    assert bootstrap.status_code == 201
+    headers = {"Authorization": f"Bearer {bootstrap.json()['access_token']}"}
 
     oversized = client.post(
         "/api/v1/pcap/analyses",
@@ -147,7 +178,7 @@ def test_pcap_api_rejects_oversized_and_non_capture_uploads(tmp_path: Path) -> N
     invalid = client.post(
         "/api/v1/pcap/analyses",
         files={"file": ("capture.pcap", b"not-a-capture", "application/octet-stream")},
-        headers={"X-RedPath-Role": "soc_analyst", "X-Tenant-ID": "tenant-a"},
+        headers=headers,
     )
     assert invalid.status_code == 422
 

@@ -2,6 +2,7 @@ import pytest
 from app.models.domain import Asset
 from pydantic import ValidationError
 
+
 def test_asset_contract_is_versioned_and_rejects_unknown_fields() -> None:
     asset = Asset(
         asset_id="asset-1",
