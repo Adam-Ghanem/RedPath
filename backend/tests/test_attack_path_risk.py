@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from app.core.authz import Principal, authorize_tenant, require_authenticated_analyst
 from app.schemas.contracts import AttackEdge, AttackNode, AttackPathAnalysisRequest
@@ -199,8 +201,8 @@ def test_attack_path_api_enforces_authentication_and_returns_analysis() -> None:
     from fastapi.testclient import TestClient
 
     settings = Settings(
-        database_url="sqlite:////tmp/redpath-attack-path-api.db",
-        audit_log_path="/tmp/redpath-attack-path-api.jsonl",
+        database_url=f"sqlite:////tmp/redpath-attack-path-api-{uuid4().hex}.db",
+        audit_log_path=f"/tmp/redpath-attack-path-api-{uuid4().hex}.jsonl",
         auth_bootstrap_token="attack-path-test-bootstrap-token",
     )
     client = TestClient(create_app(settings))
