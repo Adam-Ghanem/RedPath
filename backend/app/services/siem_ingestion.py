@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
+from app.core.observability import MetricsRegistry
 from app.db.models import TelemetryEvent as TelemetryEventRow
 from app.db.models import TelemetryIngestionRun, utcnow
 from app.models.telemetry import TelemetryEvent, TelemetryIngestionResponse, TelemetryListResponse, TelemetryQuery
 from app.services.telemetry_correlation import load_telemetry
+from app.services.telemetry_resilience import EXPECTED_SCHEMA_VERSION, TelemetryResilienceStore, inspect_schema
 from app.services.wazuh import WazuhIndexerClient
 
 _TECHNIQUE_PATTERN = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
@@ -172,12 +174,18 @@ class SiemIngestionService:
         session_factory: Callable[[], Any],
         *,
         max_query_window_hours: int = 24,
+        resilience: TelemetryResilienceStore | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self.client = client
         self.session_factory = session_factory
         self.max_query_window_hours = max_query_window_hours
+        self.resilience = resilience
+        self.metrics = metrics
 
     async def ingest(self, query: TelemetryQuery) -> TelemetryIngestionResponse:
+        if self.metrics:
+            self.metrics.increment_telemetry("ingest_attempts_total")
         start = query.start.astimezone(timezone.utc)
         end = query.end.astimezone(timezone.utc)
         if start >= end:
@@ -185,58 +193,119 @@ class SiemIngestionService:
         window_hours = (end - start).total_seconds() / 3600
         if window_hours > self.max_query_window_hours:
             raise ValueError(f"telemetry query window cannot exceed {self.max_query_window_hours} hours")
-        raw_documents = await self.client.search_alerts(
-            start=start,
-            end=end,
-            technique_ids=query.technique_ids,
-            size=query.limit,
-        )
-        events = [normalize_wazuh_document(document, query.tenant_id) for document in raw_documents]
+        checkpoint_cursor = self.resilience.get_checkpoint(query.tenant_id) if self.resilience else None
+        try:
+            next_cursor = checkpoint_cursor
+            page_method = getattr(self.client, "search_alerts_page", None)
+            if callable(page_method) and not getattr(self.client, "_configuration_error", None):
+                raw_documents, next_cursor = await page_method(
+                    start=start,
+                    end=end,
+                    technique_ids=query.technique_ids,
+                    size=query.limit,
+                    checkpoint_cursor=checkpoint_cursor,
+                )
+                if checkpoint_cursor and self.metrics:
+                    self.metrics.increment_telemetry("checkpoint_recoveries_total")
+            else:
+                raw_documents = await self.client.search_alerts(
+                    start=start,
+                    end=end,
+                    technique_ids=query.technique_ids,
+                    size=query.limit,
+                )
+            observations = [inspect_schema(document) for document in raw_documents]
+            drift = next((observation for observation in observations if observation.drift_reason), None)
+            if drift:
+                if self.resilience:
+                    self.resilience.record_failure(
+                        tenant_id=query.tenant_id,
+                        error_code="schema_drift",
+                        checkpoint_cursor=checkpoint_cursor,
+                        schema_version=drift.schema_version,
+                        schema_signature=drift.signature,
+                    )
+                raise ValueError(f"Wazuh schema drift detected: {drift.drift_reason}")
+            events = [normalize_wazuh_document(document, query.tenant_id) for document in raw_documents]
+        except ValueError as exc:
+            if self.resilience and "schema drift" not in str(exc).lower():
+                code = "checkpoint_invalid" if "checkpoint" in str(exc).lower() else "connector_error"
+                self.resilience.record_failure(
+                    tenant_id=query.tenant_id,
+                    error_code=code,
+                    checkpoint_cursor=checkpoint_cursor,
+                )
+            raise
+        except Exception:
+            if self.resilience:
+                self.resilience.record_failure(
+                    tenant_id=query.tenant_id,
+                    error_code="connector_error",
+                    checkpoint_cursor=checkpoint_cursor,
+                )
+            raise
         run_id = str(uuid4())
         stored_count = 0
         deduplicated_count = 0
-        with self.session_factory() as session:
-            session.add(
-                TelemetryIngestionRun(
-                    id=run_id,
-                    tenant_id=query.tenant_id,
-                    source="wazuh",
-                    start_at=start,
-                    end_at=end,
-                    fetched_count=len(events),
-                )
-            )
-            for event in events:
-                existing = session.get(TelemetryEventRow, event.event_id)
-                if existing is not None:
-                    deduplicated_count += 1
-                    continue
+        try:
+            with self.session_factory() as session:
                 session.add(
-                    TelemetryEventRow(
-                        id=event.event_id,
-                        ingestion_run_id=run_id,
-                        tenant_id=event.tenant_id,
-                        source=event.source,
-                        observed_at=event.observed_at,
-                        severity=event.severity,
-                        rule_id=event.rule_id,
-                        rule_description=event.rule_description,
-                        asset_id=event.asset_id,
-                        technique_ids=event.technique_ids,
-                        summary=event.summary,
-                        safe_fields=event.safe_fields,
-                        correlation_fields=event.correlation_fields,
-                        raw_sha256=event.raw_sha256,
+                    TelemetryIngestionRun(
+                        id=run_id,
+                        tenant_id=query.tenant_id,
+                        source="wazuh",
+                        start_at=start,
+                        end_at=end,
+                        fetched_count=len(events),
                     )
                 )
-                stored_count += 1
-            session.flush()
-            run = session.get(TelemetryIngestionRun, run_id)
-            if run is None:
-                raise RuntimeError("ingestion run was not persisted")
-            run.stored_count = stored_count
-            run.deduplicated_count = deduplicated_count
-            session.commit()
+                for event in events:
+                    existing = session.get(TelemetryEventRow, event.event_id)
+                    if existing is not None:
+                        deduplicated_count += 1
+                        continue
+                    session.add(
+                        TelemetryEventRow(
+                            id=event.event_id,
+                            ingestion_run_id=run_id,
+                            tenant_id=event.tenant_id,
+                            source=event.source,
+                            observed_at=event.observed_at,
+                            severity=event.severity,
+                            rule_id=event.rule_id,
+                            rule_description=event.rule_description,
+                            asset_id=event.asset_id,
+                            technique_ids=event.technique_ids,
+                            summary=event.summary,
+                            safe_fields=event.safe_fields,
+                            correlation_fields=event.correlation_fields,
+                            raw_sha256=event.raw_sha256,
+                        )
+                    )
+                    stored_count += 1
+                session.flush()
+                run = session.get(TelemetryIngestionRun, run_id)
+                if run is None:
+                    raise RuntimeError("ingestion run was not persisted")
+                run.stored_count = stored_count
+                run.deduplicated_count = deduplicated_count
+                session.commit()
+        except Exception:
+            if self.resilience:
+                self.resilience.record_failure(
+                    tenant_id=query.tenant_id,
+                    error_code="persistence_error",
+                    checkpoint_cursor=checkpoint_cursor,
+                )
+            raise
+        if self.resilience:
+            last_event_at = max((event.observed_at for event in events), default=None)
+            self.resilience.mark_success(
+                tenant_id=query.tenant_id,
+                checkpoint_cursor=next_cursor,
+                schema_version=EXPECTED_SCHEMA_VERSION,
+                last_event_at=last_event_at,
+            )
         return TelemetryIngestionResponse(
             run_id=run_id,
             tenant_id=query.tenant_id,

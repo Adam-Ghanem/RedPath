@@ -399,6 +399,39 @@ class TelemetryEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class TelemetryIngestionState(Base):
+    __tablename__ = "telemetry_ingestion_state"
+
+    id: Mapped[str] = mapped_column(String(192), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="wazuh")
+    checkpoint_cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cursor_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_lag_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    schema_drift_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TelemetryDeadLetter(Base):
+    __tablename__ = "telemetry_dead_letters"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="wazuh")
+    error_code: Mapped[str] = mapped_column(String(64), index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    retry_after_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class EvidenceCustodyEvent(Base):
     __tablename__ = "evidence_custody_events"
 

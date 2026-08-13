@@ -129,6 +129,13 @@ class TelemetryHealthResponse(BaseModel):
     total_runs: int = Field(default=0, ge=0)
     total_events: int = Field(default=0, ge=0)
     total_deduplicated: int = Field(default=0, ge=0)
+    lag_seconds: float | None = Field(default=None, ge=0)
+    checkpoint_present: bool = False
+    schema_version: str | None = Field(default=None, max_length=64)
+    schema_drift_count: int = Field(default=0, ge=0)
+    consecutive_failures: int = Field(default=0, ge=0)
+    dead_letter_count: int = Field(default=0, ge=0)
+    last_error_code: str | None = Field(default=None, max_length=64)
 
 
 class WazuhDocument(BaseModel):

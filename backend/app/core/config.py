@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     pcap_redaction_salt: str = "redpath-lab-redaction-salt"
     siem_max_query_window_hours: int = 24
     siem_request_timeout_seconds: int = 20
+    siem_connector_role: str = "redpath_reader"
+    siem_connector_read_only: bool = True
+    siem_checkpoint_max_bytes: int = 1024
+    siem_dead_letter_retention_hours: int = 72
+    siem_dead_letter_metadata_max_bytes: int = 2048
+    siem_dead_letter_retention_max: int = 1000
+    siem_lag_warning_seconds: int = 900
+    siem_schema_version: str = "wazuh-alert-v1"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

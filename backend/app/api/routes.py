@@ -196,6 +196,7 @@ from app.services.telemetry_correlation import (
     load_telemetry,
     project_case_evidence,
 )
+from app.services.telemetry_resilience import TelemetryResilienceStore
 from app.services.wazuh import WazuhIndexerClient
 
 
@@ -436,17 +437,30 @@ def build_router(
         retention_hours=settings.discovery_job_retention_hours,
         retention_max=settings.discovery_job_retention_max,
     )
+    telemetry_resilience = TelemetryResilienceStore(
+        session_factory,
+        metrics=metrics,
+        dead_letter_retention_hours=settings.siem_dead_letter_retention_hours,
+        dead_letter_max_metadata_bytes=settings.siem_dead_letter_metadata_max_bytes,
+        lag_warning_seconds=settings.siem_lag_warning_seconds,
+        retention_max_dead_letters=settings.siem_dead_letter_retention_max,
+    )
     siem_client = WazuhIndexerClient(
         settings.wazuh_indexer_url,
         settings.wazuh_username,
         settings.wazuh_password,
         verify_tls=settings.wazuh_verify_tls,
         timeout_seconds=settings.siem_request_timeout_seconds,
+        connector_role=settings.siem_connector_role,
+        read_only=settings.siem_connector_read_only,
+        checkpoint_max_bytes=settings.siem_checkpoint_max_bytes,
     )
     siem_service = SiemIngestionService(
         siem_client,
         session_factory,
         max_query_window_hours=settings.siem_max_query_window_hours,
+        resilience=telemetry_resilience,
+        metrics=metrics,
     )
     detection_catalog = DetectionRuleCatalog()
 
@@ -547,6 +561,7 @@ def build_router(
                 tenant_id=principal.tenant_id,
                 request=request,
                 catalog=detection_catalog,
+                metrics=metrics,
             )
         except (KeyError, ValueError) as exc:
             status_code = 404 if isinstance(exc, KeyError) else 422
@@ -596,7 +611,12 @@ def build_router(
     )
     def siem_telemetry_health() -> TelemetryHealthResponse:
         principal = get_principal()
-        result = health_diagnostics(session_factory, tenant_id=principal.tenant_id)
+        result = health_diagnostics(
+            session_factory,
+            tenant_id=principal.tenant_id,
+            resilience=telemetry_resilience,
+            lag_warning_seconds=settings.siem_lag_warning_seconds,
+        )
         record_audit(
             "siem.telemetry_health_read",
             {

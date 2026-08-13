@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from app.core.observability import MetricsRegistry
 from app.db.models import TelemetryEvent as TelemetryEventRow
 from app.db.models import TelemetryIngestionRun
 from app.models.telemetry import (
@@ -17,6 +18,7 @@ from app.models.telemetry import (
 )
 from app.schemas.contracts import WazuhAlert
 from app.services.detection_framework import DetectionRuleCatalog
+from app.services.telemetry_resilience import TelemetryResilienceStore
 
 MAX_CORRELATION_WINDOW_HOURS = 24
 
@@ -68,6 +70,7 @@ def evaluate_telemetry(
     tenant_id: str,
     request: TelemetryDetectionRequest,
     catalog: DetectionRuleCatalog,
+    metrics: MetricsRegistry | None = None,
 ) -> TelemetryDetectionResponse:
     start, end = validate_window(request.start, request.end)
     events = load_telemetry(
@@ -79,6 +82,9 @@ def evaluate_telemetry(
     )
     alerts = [_event_to_alert(event) for event in events]
     evaluation = catalog.evaluate(alerts, request.rule_ids)
+    if metrics:
+        metrics.increment_telemetry("correlation_evaluations_total")
+        metrics.increment_telemetry("correlation_matches_total", len(evaluation.matches))
     return TelemetryDetectionResponse(
         tenant_id=tenant_id,
         start=start,
@@ -106,7 +112,14 @@ def project_case_evidence(events: list[TelemetryEvent]) -> list[TelemetryEvidenc
     ]
 
 
-def health_diagnostics(session_factory: Callable[[], Any], *, tenant_id: str) -> TelemetryHealthResponse:
+def health_diagnostics(
+    session_factory: Callable[[], Any],
+    *,
+    tenant_id: str,
+    resilience: TelemetryResilienceStore | None = None,
+    lag_warning_seconds: int = 900,
+    now: datetime | None = None,
+) -> TelemetryHealthResponse:
     with session_factory() as session:
         last_run = session.scalar(
             select(TelemetryIngestionRun)
@@ -130,9 +143,13 @@ def health_diagnostics(session_factory: Callable[[], Any], *, tenant_id: str) ->
         last_event_at = session.scalar(
             select(func.max(TelemetryEventRow.observed_at)).where(TelemetryEventRow.tenant_id == tenant_id)
         )
+    resilience_health = resilience.health(tenant_id=tenant_id, now=now) if resilience else None
     status = "unknown" if last_run is None else "healthy"
     if last_run is not None and last_run.fetched_count != last_run.stored_count + last_run.deduplicated_count:
         status = "degraded"
+    if resilience_health and resilience_health.status != "unknown":
+        status = resilience_health.status
+    lag_seconds = resilience_health.lag_seconds if resilience_health else None
     return TelemetryHealthResponse(
         tenant_id=tenant_id,
         status=status,
@@ -145,6 +162,13 @@ def health_diagnostics(session_factory: Callable[[], Any], *, tenant_id: str) ->
         total_runs=int(total_runs),
         total_events=int(total_events),
         total_deduplicated=int(total_deduplicated),
+        lag_seconds=lag_seconds,
+        checkpoint_present=resilience_health.checkpoint_present if resilience_health else False,
+        schema_version=resilience_health.schema_version if resilience_health else None,
+        schema_drift_count=resilience_health.schema_drift_count if resilience_health else 0,
+        consecutive_failures=resilience_health.consecutive_failures if resilience_health else 0,
+        dead_letter_count=resilience_health.dead_letter_count if resilience_health else 0,
+        last_error_code=resilience_health.last_error_code if resilience_health else None,
     )
 
 

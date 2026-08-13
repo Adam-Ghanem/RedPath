@@ -14,6 +14,20 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_TELEMETRY_COUNTER_NAMES = frozenset(
+    {
+        "ingest_attempts_total",
+        "ingest_success_total",
+        "ingest_failures_total",
+        "dead_letters_total",
+        "schema_drift_total",
+        "correlation_evaluations_total",
+        "correlation_matches_total",
+        "checkpoint_recoveries_total",
+        "retention_pruned_total",
+    }
+)
+_TELEMETRY_GAUGE_NAMES = frozenset({"lag_seconds", "consecutive_failures", "dead_letter_count"})
 def _safe_request_id(value: str | None) -> str:
     if value and _REQUEST_ID_PATTERN.fullmatch(value):
         return value
@@ -44,6 +58,8 @@ class MetricsRegistry:
         self._requests: defaultdict[tuple[str, str, str], int] = defaultdict(int)
         self._duration_seconds: defaultdict[tuple[str, str], float] = defaultdict(float)
         self._duration_count: defaultdict[tuple[str, str], int] = defaultdict(int)
+        self._telemetry_counters: defaultdict[str, int] = defaultdict(int)
+        self._telemetry_gauges: dict[str, float] = {}
         self._in_flight = 0
 
     def start_request(self) -> None:
@@ -58,6 +74,18 @@ class MetricsRegistry:
             self._duration_seconds[(method, route)] += duration_seconds
             self._duration_count[(method, route)] += 1
 
+    def increment_telemetry(self, name: str, amount: int = 1) -> None:
+        if name not in _TELEMETRY_COUNTER_NAMES or amount < 0:
+            raise ValueError("unsupported telemetry counter")
+        with self._lock:
+            self._telemetry_counters[name] += amount
+
+    def set_telemetry_gauge(self, name: str, value: float) -> None:
+        if name not in _TELEMETRY_GAUGE_NAMES or value < 0:
+            raise ValueError("unsupported telemetry gauge")
+        with self._lock:
+            self._telemetry_gauges[name] = float(value)
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
@@ -65,6 +93,8 @@ class MetricsRegistry:
                 "requests": dict(self._requests),
                 "durations": dict(self._duration_seconds),
                 "duration_counts": dict(self._duration_count),
+                "telemetry_counters": dict(self._telemetry_counters),
+                "telemetry_gauges": dict(self._telemetry_gauges),
             }
 
     def prometheus(self) -> str:
@@ -100,6 +130,23 @@ class MetricsRegistry:
         for (method, route), count in sorted(snapshot["duration_counts"].items()):
             labels = f'method="{_label_escape(method)}",route="{_label_escape(route)}"'
             lines.append(f"redpath_http_request_duration_seconds_count{{{labels}}} {count}")
+
+        lines.extend(
+            [
+                "# HELP redpath_telemetry_events_total Bounded telemetry resilience counters.",
+                "# TYPE redpath_telemetry_events_total counter",
+            ]
+        )
+        for name, count in sorted(snapshot["telemetry_counters"].items()):
+            lines.append(f"redpath_telemetry_{name} {count}")
+        lines.extend(
+            [
+                "# HELP redpath_telemetry_state Bounded telemetry resilience gauges.",
+                "# TYPE redpath_telemetry_state gauge",
+            ]
+        )
+        for name, value in sorted(snapshot["telemetry_gauges"].items()):
+            lines.append(f"redpath_telemetry_{name} {value:.3f}")
 
         lines.extend(
             [

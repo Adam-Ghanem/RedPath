@@ -6,12 +6,19 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.core.config import Settings
+from app.core.observability import MetricsRegistry
 from app.db.models import create_session_factory
 from app.main import create_app
 from app.models.telemetry import TelemetryDetectionRequest, TelemetryQuery
 from app.services.detection_framework import DetectionRuleCatalog
 from app.services.siem_ingestion import SiemIngestionService, list_telemetry, normalize_wazuh_document
 from app.services.telemetry_correlation import evaluate_telemetry, health_diagnostics, project_case_evidence
+from app.services.telemetry_resilience import (
+    Checkpoint,
+    CheckpointCodec,
+    TelemetryResilienceStore,
+    inspect_schema,
+)
 from app.services.wazuh import WazuhIndexerClient
 from fastapi.testclient import TestClient
 
@@ -296,3 +303,108 @@ def test_telemetry_detection_case_projection_health_and_replay_dedup(tmp_path) -
     assert health.total_events == 1
     assert health.total_deduplicated == 1
     assert other_tenant.event_count == 0
+
+
+class PagingWazuhClient(FakeWazuhClient):
+    def __init__(self, documents: list[dict]) -> None:
+        super().__init__(documents)
+        self.page_cursors: list[str | None] = []
+
+    async def search_alerts_page(self, **kwargs: object) -> tuple[list[dict], str | None]:
+        cursor = kwargs.get("checkpoint_cursor")
+        self.page_cursors.append(cursor if isinstance(cursor, str) else None)
+        return self.documents, CheckpointCodec.encode(
+            Checkpoint(datetime(2026, 8, 13, 0, 30, tzinfo=timezone.utc), "alert-001")
+        )
+
+
+def test_checkpoint_round_trip_and_recovery_after_restart(tmp_path) -> None:
+    session_factory = create_session_factory(f"sqlite:///{tmp_path / 'recovery.db'}")
+    resilience = TelemetryResilienceStore(session_factory)
+    cursor = CheckpointCodec.encode(
+        Checkpoint(datetime(2026, 8, 13, 0, 30, tzinfo=timezone.utc), "alert-001")
+    )
+    assert CheckpointCodec.decode(cursor).provider_id == "alert-001"
+    client = PagingWazuhClient([_fixture_document()])
+    service = SiemIngestionService(client, session_factory, resilience=resilience)
+
+    asyncio.run(service.ingest(_query()))
+    asyncio.run(service.ingest(_query()))
+
+    assert client.page_cursors == [None, cursor]
+    assert resilience.get_checkpoint("lab") == cursor
+    assert resilience.health(tenant_id="lab").checkpoint_present is True
+
+
+def test_schema_drift_fails_closed_and_dead_letter_metadata_is_bounded(tmp_path) -> None:
+    session_factory = create_session_factory(f"sqlite:///{tmp_path / 'drift.db'}")
+    resilience = TelemetryResilienceStore(session_factory, dead_letter_max_metadata_bytes=256)
+    malformed = {"_id": "drift-1", "_source": {"timestamp": "2026-08-13T00:30:00Z"}}
+    service = SiemIngestionService(FakeWazuhClient([malformed]), session_factory, resilience=resilience)
+
+    with pytest.raises(ValueError, match="schema drift"):
+        asyncio.run(service.ingest(_query()))
+
+    health = resilience.health(tenant_id="lab")
+    assert health.status == "degraded"
+    assert health.schema_drift_count == 1
+    assert health.dead_letter_count == 1
+    with session_factory() as session:
+        from app.db.models import TelemetryDeadLetter
+
+        dead_letter = session.query(TelemetryDeadLetter).one()
+        assert len(str(dead_letter.metadata_json).encode("utf-8")) <= 256
+        assert dead_letter.error_code == "schema_drift"
+
+
+def test_dead_letter_retention_is_tenant_scoped_and_metrics_are_fixed_name(tmp_path) -> None:
+    session_factory = create_session_factory(f"sqlite:///{tmp_path / 'retention.db'}")
+    metrics = MetricsRegistry()
+    resilience = TelemetryResilienceStore(session_factory, metrics=metrics)
+    resilience.record_failure(tenant_id="lab", error_code="connector_error")
+    resilience.record_failure(tenant_id="other", error_code="connector_error")
+    with session_factory() as session:
+        from app.db.models import TelemetryDeadLetter
+
+        for row in session.query(TelemetryDeadLetter).all():
+            row.expires_at = (
+                datetime(2026, 8, 12, tzinfo=timezone.utc)
+                if row.tenant_id == "lab"
+                else datetime(2026, 8, 14, tzinfo=timezone.utc)
+            )
+        session.commit()
+
+    assert resilience.prune_dead_letters(
+        tenant_id="lab", now=datetime(2026, 8, 13, tzinfo=timezone.utc)
+    ) == 1
+    assert resilience.health(tenant_id="lab").dead_letter_count == 0
+    assert resilience.health(tenant_id="other").dead_letter_count == 1
+    output = metrics.prometheus()
+    assert "redpath_telemetry_dead_letters_total 2" in output
+    assert "tenant_id" not in output
+
+
+def test_schema_observation_and_connector_configuration_fail_closed() -> None:
+    observation = inspect_schema(_fixture_document())
+    drift = inspect_schema({"_source": {"timestamp": "2026-08-13T00:30:00Z"}})
+
+    assert observation.schema_version == "wazuh-alert-v1"
+    assert observation.drift_reason is None
+    assert drift.drift_reason == "missing_rule_object"
+    with pytest.raises(ValueError, match="HTTPS"):
+        WazuhIndexerClient.validate_configuration(
+            base_url="http://wazuh.example:9200",
+            username="reader",
+            password="secret",
+            verify_tls=True,
+            timeout_seconds=20,
+        )
+    with pytest.raises(ValueError, match="read-only"):
+        WazuhIndexerClient.validate_configuration(
+            base_url="https://wazuh.example:9200",
+            username="reader",
+            password="secret",
+            verify_tls=True,
+            timeout_seconds=20,
+            read_only=False,
+        )
