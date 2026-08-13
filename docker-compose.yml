@@ -7,11 +7,24 @@ services:
       DATABASE_URL: sqlite:///./data/redpath.db
       ALLOWED_CIDRS: 192.0.2.0/24,198.51.100.0/24
       DRY_RUN: "true"
+      METRICS_ENABLED: "true"
       AUDIT_LOG_PATH: ./data/audit.jsonl
     volumes:
       - redpath-demo-data:/app/data
     ports:
       - "8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 512m
+    restart: unless-stopped
+    networks:
+      - redpath-demo
 
   console:
     profiles: ["demo"]
@@ -19,9 +32,28 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.demo
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
-      - "5173:80"
+      - "5173:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=16m
+      - /var/run:rw,noexec,nosuid,nodev,size=1m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 128m
+    restart: unless-stopped
+    networks:
+      - redpath-demo
 
 volumes:
   redpath-demo-data:
+
+networks:
+  redpath-demo:
+    name: redpath-demo

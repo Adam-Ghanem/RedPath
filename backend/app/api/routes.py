@@ -5,10 +5,11 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.core.audit import AuditLogger
 from app.core.config import Settings
+from app.core.observability import MetricsRegistry
 from app.core.scope import ScopePolicy, ScopeViolation
 from app.db.models import create_session_factory
 from app.kernel.contracts import IntegrationAnalysisRequest, IntegrationContext, IntegrationContextRequest
@@ -82,8 +83,9 @@ from app.services.scenario_runner import execute_scenario, list_run_summaries
 from app.services.scenarios import list_scenarios
 
 
-def build_router(settings: Settings) -> APIRouter:
+def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
+    metrics = metrics or MetricsRegistry()
     scope = ScopePolicy.from_strings(settings.allowed_cidr_list)
     recon_service = ReconService(scope, timeout_seconds=settings.recon_timeout_seconds)
     audit = AuditLogger(settings.audit_log_path)
@@ -95,7 +97,27 @@ def build_router(settings: Settings) -> APIRouter:
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
-        return {"status": "ok", "service": settings.app_name, "dry_run_default": settings.dry_run}
+        return {
+            "status": "ok",
+            "service": settings.app_name,
+            "release": settings.release,
+            "environment": settings.environment,
+            "dry_run_default": settings.dry_run,
+        }
+
+    @router.get("/health/live")
+    def liveness() -> dict[str, str]:
+        return {"status": "live", "service": settings.app_name}
+
+    @router.get("/health/ready")
+    def readiness() -> dict[str, str | dict[str, str]]:
+        return {"status": "ready", "checks": {"application": "ok"}}
+
+    @router.get("/metrics", include_in_schema=False)
+    def metrics_endpoint() -> PlainTextResponse:
+        if not settings.metrics_enabled:
+            raise HTTPException(status_code=404, detail="metrics are disabled")
+        return PlainTextResponse(metrics.prometheus(), media_type="text/plain; version=0.0.4")
 
     @router.get("/scope")
     def get_scope() -> dict[str, list[str] | bool]:

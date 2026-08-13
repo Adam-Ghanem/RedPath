@@ -7,42 +7,128 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: redpath-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "22"
+
 jobs:
   backend:
+    name: Backend quality
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: PYTHONPATH=. pytest
-      - run: ruff check app tests
-      - run: bandit -r app -ll
-
-  semgrep:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: semgrep/semgrep-action@v1
-        with:
-          config: p/python
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Run focused and integration tests
+        run: PYTHONPATH=. pytest -q
+      - name: Run Ruff
+        run: ruff check app tests
+      - name: Run Bandit
+        run: bandit -r app -ll
+      - name: Compile Python sources
+        run: python -m compileall -q app
+      - name: Audit Python dependencies
+        run: python -m pip install pip-audit==2.8.0 && pip-audit -r requirements.txt --strict
 
   frontend:
+    name: Frontend quality
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: frontend/package.json
-      - run: npm install
-      - run: npm run lint
-      - run: npm run build
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --ignore-scripts
+      - name: Run frontend tests
+        run: npm run test -- --run
+      - name: Run TypeScript quality gate
+        run: npm run lint
+      - name: Build frontend
+        run: npm run build
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  repository:
+    name: Repository quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject whitespace errors
+        run: git diff --check
+      - name: Scan tracked files for high-risk secret patterns
+        run: |
+          ! git grep -n -I -E '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9_]{20,})' -- . ':!docs/github-metadata.md'
+      - name: Validate compose configuration
+        run: docker compose config --quiet
+      - name: Lint backend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: backend/Dockerfile
+          failure-threshold: error
+      - name: Lint frontend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile.demo
+          failure-threshold: error
+
+  containers:
+    name: Container build and vulnerability gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [backend, frontend, repository]
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build --pull --tag redpath-api:${{ github.sha }} ./backend
+      - name: Build frontend image
+        run: docker build --pull --tag redpath-console:${{ github.sha }} --file frontend/Dockerfile.demo ./frontend
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: redpath-api:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: redpath-console:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH

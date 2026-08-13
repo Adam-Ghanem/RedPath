@@ -23,7 +23,7 @@ For a public portfolio or trial deployment, deploy **only** the static `frontend
 
 | Platform | Container configuration |
 | --- | --- |
-| Render | Create a new Web Service from this repository, select **Docker**, set the Dockerfile path to `frontend/Dockerfile.demo`, and set the service port to `80`. |
-| Fly.io | Run `fly launch --dockerfile frontend/Dockerfile.demo` from the repository root, then set the generated service `internal_port` to `80` before deployment. |
+| Render | Create a new Web Service from this repository, select **Docker**, set the Dockerfile path to `frontend/Dockerfile.demo`, and set the service port to `8080`. |
+| Fly.io | Run `fly launch --dockerfile frontend/Dockerfile.demo` from the repository root, then set the generated service `internal_port` to `8080` before deployment. |
 
 The production Vercel project is already Git-connected to `main` with `frontend/` as its root directory. Each successful push to `main` automatically creates the live-demo deployment at [redpath-sec.vercel.app](https://redpath-sec.vercel.app). This single Git-connected path avoids duplicate deployments, secret management in GitHub Actions, and an extra workflow-maintenance surface.
