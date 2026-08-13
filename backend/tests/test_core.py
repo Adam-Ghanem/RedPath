@@ -20,7 +20,10 @@ def test_recon_defaults_to_planning_only() -> None:
     service = ReconService(ScopePolicy.from_strings(["192.168.56.0/24"]))
     result = service.run(["192.168.56.10"], profile="service_inventory", dry_run=True)
     assert result.dry_run is True
-    assert len(result.commands) == 3
+    assert len(result.commands) == 1
+    assert result.commands[0].tool == "nmap"
+    assert "-sV" in result.commands[0].argv
+    assert "enum4linux" not in result.commands[0].argv
     assert all(command.executed is False for command in result.commands)
 
 

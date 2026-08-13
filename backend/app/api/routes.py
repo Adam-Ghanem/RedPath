@@ -34,6 +34,8 @@ from app.schemas.contracts import (
     CoverageScorecard,
     DetectionGapReport,
     DetectionTuningItem,
+    DiscoveryJobCreate,
+    DiscoveryJobStatus,
     EvidenceCreate,
     EvidenceManifest,
     EvidenceResponse,
@@ -43,6 +45,7 @@ from app.schemas.contracts import (
     GraphRequest,
     GraphResult,
     IntegrityVerification,
+    InventoryAsset,
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
@@ -69,6 +72,11 @@ from app.schemas.identity import (
 )
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
+from app.services.discovery_jobs import (
+    DiscoveryJobNotFound,
+    DiscoveryJobService,
+    DiscoveryRateLimitExceeded,
+)
 from app.services.expert_ops import (
     campaign_export,
     campaign_timeline,
@@ -210,6 +218,13 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
     def auth_users() -> list[UserResponse]:
         principal = get_principal()
         return identity.list_users(principal)
+    discovery_jobs = DiscoveryJobService(
+        recon_service,
+        session_factory,
+        audit,
+        max_workers=settings.recon_max_workers,
+        max_jobs_per_minute=settings.discovery_max_jobs_per_minute,
+    )
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
@@ -525,6 +540,38 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
     )
     def detection_tuning() -> list[DetectionTuningItem]:
         return detection_tuning_queue(session_factory)
+
+    @protected_router.post(
+        "/discovery/jobs", response_model=DiscoveryJobStatus, status_code=202,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def discovery_job_create(request: DiscoveryJobCreate) -> DiscoveryJobStatus:
+        principal = get_principal()
+        requested_targets = [str(target) for target in request.targets]
+        effective_dry_run = settings.dry_run or request.dry_run
+        try:
+            return discovery_jobs.submit(principal.tenant_id, requested_targets, request.profile, effective_dry_run)
+        except DiscoveryRateLimitExceeded as exc:
+            record_audit("discovery.job_rate_limited", {"tenant_id": principal.tenant_id, "target_count": len(requested_targets)})
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except ScopeViolation as exc:
+            record_audit("discovery.job_rejected", {"tenant_id": principal.tenant_id, "targets": requested_targets, "reason": str(exc)})
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @protected_router.get("/discovery/jobs", response_model=list[DiscoveryJobStatus], dependencies=[Depends(permission_dependency("read"))])
+    def discovery_job_list(limit: int = 20) -> list[DiscoveryJobStatus]:
+        return discovery_jobs.list(get_principal().tenant_id, limit)
+
+    @protected_router.get("/discovery/jobs/{job_id}", response_model=DiscoveryJobStatus, dependencies=[Depends(permission_dependency("read"))])
+    def discovery_job_get(job_id: str) -> DiscoveryJobStatus:
+        try:
+            return discovery_jobs.get(get_principal().tenant_id, job_id)
+        except DiscoveryJobNotFound as exc:
+            raise HTTPException(status_code=404, detail="Discovery job not found") from exc
+
+    @protected_router.get("/inventory/assets", response_model=list[InventoryAsset], dependencies=[Depends(permission_dependency("read"))])
+    def inventory_assets(limit: int = 100) -> list[InventoryAsset]:
+        return discovery_jobs.inventory(get_principal().tenant_id, limit)
 
     @protected_router.post(
         "/recon", response_model=ReconResult, dependencies=[Depends(permission_dependency("analyze"))]

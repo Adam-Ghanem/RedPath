@@ -90,6 +90,24 @@ class ScanRun(Base):
     assets: Mapped[list["Asset"]] = relationship(back_populates="scan_run", cascade="all, delete-orphan")
 
 
+class DiscoveryJob(Base):
+    __tablename__ = "discovery_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    profile: Mapped[str] = mapped_column(String(32), default="safe")
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    dry_run: Mapped[bool] = mapped_column(default=True)
+    targets: Mapped[list[str]] = mapped_column(JSON, default=list)
+    scan_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Asset(Base):
     __tablename__ = "assets"
 

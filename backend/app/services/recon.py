@@ -28,28 +28,12 @@ class ReconService:
         validated = self.scope.validate_targets(targets)
         commands: list[ReconCommand] = []
         for target in validated:
-            commands.append(
-                ReconCommand(
-                    tool="nmap",
-                    argv=["nmap", "-sT", "-Pn", "--top-ports", "100", "--open", "-T2", target],
-                    purpose="Inventory common TCP services without exploit scripts.",
-                )
-            )
+            argv = ["nmap", "-sT", "-Pn", "--top-ports", "100", "--open", "-T2"]
+            purpose = "Inventory common TCP services without exploit scripts."
             if profile == "service_inventory":
-                commands.append(
-                    ReconCommand(
-                        tool="enum4linux",
-                        argv=["enum4linux", "-a", target],
-                        purpose="Collect SMB/Windows identity metadata in the lab.",
-                    )
-                )
-                commands.append(
-                    ReconCommand(
-                        tool="smbclient",
-                        argv=["smbclient", "-L", f"//{target}", "-N", "--no-pass"],
-                        purpose="List anonymously visible SMB shares without credentials.",
-                    )
-                )
+                argv.extend(["-sV", "--version-light"])
+                purpose = "Identify common TCP service versions with a light, read-only probe."
+            commands.append(ReconCommand(tool="nmap", argv=[*argv, target], purpose=purpose))
         return commands
 
     def run(self, targets: list[str], profile: str = "safe", dry_run: bool = True) -> ReconResult:
