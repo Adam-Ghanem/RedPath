@@ -654,6 +654,7 @@ def get_pcap_evidence_view_by_evidence(
     analysis, evidence = row
     return PcapEvidenceView(
         evidence=EvidenceResponse(
+            tenant_id=evidence.tenant_id,
             evidence_id=evidence.id,
             campaign_id=evidence.campaign_id,
             run_id=evidence.run_id,
@@ -663,6 +664,7 @@ def get_pcap_evidence_view_by_evidence(
             sha256=evidence.sha256,
             technique_id=evidence.technique_id,
             notes=evidence.notes,
+            manifest_sha256=evidence.manifest_sha256 or evidence.sha256,
             review_status=evidence.review_status,
             reviewer=evidence.reviewer,
             reviewed_at=evidence.reviewed_at,
