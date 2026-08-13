@@ -108,7 +108,7 @@ The optional stack is for maintainers inspecting API contracts—not for using t
 docker compose --profile demo up --build
 ```
 
-The console is available at [http://localhost:5173](http://localhost:5173); API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs). Read the [safe demo deployment guide](docs/demo-deployment.md) before deploying the profile to Render or Fly.io.
+The console is available at [http://localhost:5173](http://localhost:5173); API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs). The dark, read-only analyst workspace is available at [`/console`](http://localhost:5173/console); its typed API contract and access-control boundary are documented in [`docs/analyst-console.md`](docs/analyst-console.md). Read the [safe demo deployment guide](docs/demo-deployment.md) before deploying the profile to Render or Fly.io.
 
 ## Contributing
 

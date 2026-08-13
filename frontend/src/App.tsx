@@ -1,4 +1,5 @@
 import AttackPathGraph from "./components/AttackPathGraph";
+import AnalystConsole from "./features/analyst-console/AnalystConsole";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -41,7 +42,7 @@ function ReferenceBoard() {
   </div>;
 }
 
-export default function Home() {
+export function Home() {
   const [selectedPathId, setSelectedPathId] = useState("path-service-ticket");
   const [selectedAssetId, setSelectedAssetId] = useState("SVC-BACKUP");
   const [selectedScenarioId, setSelectedScenarioId] = useState("service-ticket");
@@ -69,9 +70,9 @@ export default function Home() {
       <header className="site-header">
         <a className="brand" href="#top" aria-label="RedPath home"><span className="brand-mark"><img className="brand-logo" src="/assets/redpath-red-fang.png" alt="" /></span><span>REDPATH</span><small>v0.1.0</small></a>
         <nav className="site-nav" aria-label="Primary navigation">
-          <a href="#findings">Evidence</a><a href="#explore">Path analysis</a><a href="#scenarios">Remediation</a>
+          <a href="#findings">Evidence</a><a href="#explore">Path analysis</a><a href="#scenarios">Remediation</a><a href="/console">Analyst console</a>
         </nav>
-        <a className="header-cta" href="#explore">Case RP-101</a>
+        <a className="header-cta" href="/console">Open console</a>
       </header>
 
       <main id="top">
@@ -147,4 +148,8 @@ export default function Home() {
       <footer className="site-footer"><div><a className="brand" href="#top"><span className="brand-mark"><Network size={16} /></span><span>REDPATH</span></a><p>Exposure path intelligence for safe, repeatable Active Directory lab validation.</p></div><div><span>Demo mode</span><b><i className="status-dot" /> Synthetic data only</b></div><div><span>Selected path</span><b>{selectedPath.name}</b></div></footer>
     </div>
   );
+}
+
+export default function App() {
+  return window.location.pathname.replace(/\/+$/, "") === "/console" ? <AnalystConsole /> : <Home />;
 }
