@@ -314,15 +314,13 @@ def run_migrations(engine) -> None:
         if applied:
             return
         inspector = inspect(connection)
-        metadata = MetaData()
         for table_name in _TENANT_TABLES:
             if table_name not in inspector.get_table_names():
                 continue
             columns = {column["name"] for column in inspector.get_columns(table_name)}
             if "tenant_id" not in columns:
                 connection.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN tenant_id VARCHAR(128)'))
-            table = Table(table_name, metadata, autoload_with=connection)
-            connection.execute(update(table).where(table.c.tenant_id.is_(None)).values(tenant_id="legacy"))
+            connection.execute(text(f'UPDATE "{table_name}" SET tenant_id = :tenant_id WHERE tenant_id IS NULL'), {"tenant_id": "legacy"})
         connection.execute(
             text("INSERT INTO schema_migrations (version, applied_at) VALUES (2, :applied_at)"),
             {"applied_at": utcnow().isoformat()},
