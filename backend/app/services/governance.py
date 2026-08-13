@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from uuid import uuid4
 
+from app.core.ownership import tenant_query
 from app.core.request_context import current_actor, current_tenant_id
 from app.db.models import AssessmentRun, Campaign, EvidenceItem, RemediationItem, RiskAcceptance, utcnow
 from app.schemas.contracts import (
@@ -66,7 +67,11 @@ def review_evidence(
 ) -> EvidenceResponse:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        row = session.query(EvidenceItem).filter_by(id=evidence_id, tenant_id=tenant_id).first()
+        row = (
+            tenant_query(session.query(EvidenceItem), EvidenceItem, tenant_id)
+            .filter(EvidenceItem.id == evidence_id)
+            .first()
+        )
         if row is None:
             raise KeyError(f"Unknown evidence: {evidence_id}")
         if request.review_status != row.review_status and request.review_status not in _EVIDENCE_TRANSITIONS.get(
@@ -92,7 +97,11 @@ def update_remediation(
 ) -> RemediationResponse:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        row = session.query(RemediationItem).filter_by(id=remediation_id, tenant_id=tenant_id).first()
+        row = (
+            tenant_query(session.query(RemediationItem), RemediationItem, tenant_id)
+            .filter(RemediationItem.id == remediation_id)
+            .first()
+        )
         if row is None:
             raise KeyError(f"Unknown remediation: {remediation_id}")
         if request.status != row.status and request.status not in _REMEDIATION_TRANSITIONS.get(row.status, set()):
@@ -163,12 +172,16 @@ def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: Sessi
     with session_factory() as session:
         if (
             request.campaign_id
-            and session.query(Campaign).filter_by(id=request.campaign_id, tenant_id=tenant_id).first() is None
+            and tenant_query(session.query(Campaign), Campaign, tenant_id)
+            .filter(Campaign.id == request.campaign_id)
+            .first() is None
         ):
             raise KeyError(f"Unknown campaign: {request.campaign_id}")
         if (
             request.remediation_id
-            and session.query(RemediationItem).filter_by(id=request.remediation_id, tenant_id=tenant_id).first() is None
+            and tenant_query(session.query(RemediationItem), RemediationItem, tenant_id)
+            .filter(RemediationItem.id == request.remediation_id)
+            .first() is None
         ):
             raise KeyError(f"Unknown remediation: {request.remediation_id}")
         session.add(row)
@@ -181,7 +194,9 @@ def list_risk_acceptances(session_factory: SessionFactory) -> list[RiskAcceptanc
     tenant_id = current_tenant_id()
     with session_factory() as session:
         rows = (
-            session.query(RiskAcceptance).filter_by(tenant_id=tenant_id).order_by(RiskAcceptance.expires_on.asc()).all()
+            tenant_query(session.query(RiskAcceptance), RiskAcceptance, tenant_id)
+            .order_by(RiskAcceptance.expires_on.asc())
+            .all()
         )
     return [_acceptance_response(row) for row in rows]
 
@@ -189,8 +204,8 @@ def list_risk_acceptances(session_factory: SessionFactory) -> list[RiskAcceptanc
 def coverage_scorecard(session_factory: SessionFactory) -> CoverageScorecard:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        runs = session.query(AssessmentRun).filter_by(tenant_id=tenant_id).all()
-        acceptances = session.query(RiskAcceptance).filter_by(tenant_id=tenant_id).all()
+        runs = tenant_query(session.query(AssessmentRun), AssessmentRun, tenant_id).all()
+        acceptances = tenant_query(session.query(RiskAcceptance), RiskAcceptance, tenant_id).all()
     expected: set[str] = set()
     gaps: set[str] = set()
     for run in runs:
@@ -221,11 +236,13 @@ def executive_kpis(session_factory: SessionFactory) -> ExecutiveKpis:
     tenant_id = current_tenant_id()
     with session_factory() as session:
         runs = (
-            session.query(AssessmentRun).filter_by(tenant_id=tenant_id).order_by(AssessmentRun.created_at.desc()).all()
+            tenant_query(session.query(AssessmentRun), AssessmentRun, tenant_id)
+            .order_by(AssessmentRun.created_at.desc())
+            .all()
         )
-        remediations = session.query(RemediationItem).filter_by(tenant_id=tenant_id).all()
-        evidence = session.query(EvidenceItem).filter_by(tenant_id=tenant_id).all()
-        acceptances = session.query(RiskAcceptance).filter_by(tenant_id=tenant_id).all()
+        remediations = tenant_query(session.query(RemediationItem), RemediationItem, tenant_id).all()
+        evidence = tenant_query(session.query(EvidenceItem), EvidenceItem, tenant_id).all()
+        acceptances = tenant_query(session.query(RiskAcceptance), RiskAcceptance, tenant_id).all()
     scorecard = coverage_scorecard(session_factory)
     latest_risk = runs[0].risk_score if runs else 0.0
     overdue = sum(1 for item in remediation_sla(session_factory) if item.state == "overdue")

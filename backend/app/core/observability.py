@@ -151,6 +151,7 @@ class RequestObservabilityMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         request_id = _safe_request_id(request.headers.get("X-Request-ID"))
+        request.state.request_id = request_id
         started = perf_counter()
         self.metrics.start_request()
         response: Response | None = None

@@ -6,7 +6,7 @@ from pathlib import Path
 from app.core.audit import AuditLogger
 from app.core.config import Settings
 from app.core.scope import ScopePolicy
-from app.db.models import create_session_factory
+from app.db.models import Asset, ScanRun, create_session_factory
 from app.main import create_app
 from app.schemas.contracts import AssetObservation, ReconResult
 from app.services.discovery_jobs import (
@@ -65,6 +65,11 @@ def test_discovery_worker_persists_inventory_and_enforces_tenant_isolation(tmp_p
         assert completed.status == "completed"
         assert completed.progress_percent == 100
         assert completed.scan_id == "scan-ai03-fixture"
+        with session_factory() as session:
+            scan = session.get(ScanRun, completed.scan_id)
+            persisted_assets = session.query(Asset).filter_by(scan_id=completed.scan_id).all()
+        assert scan is not None and scan.tenant_id == "tenant-a"
+        assert persisted_assets and all(asset.tenant_id == "tenant-a" for asset in persisted_assets)
 
         assets = service.inventory("tenant-a")
         assert len(assets) == 1

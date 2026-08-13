@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.core.audit import AuditLogger
@@ -84,6 +84,7 @@ from app.schemas.identity import (
     AuthBootstrapRequest,
     AuthLoginRequest,
     AuthMeResponse,
+    AuthSessionRevokeResponse,
     AuthTokenResponse,
     TenantCreateRequest,
     TenantResponse,
@@ -141,12 +142,17 @@ from app.services.siem_ingestion import SiemIngestionService, list_telemetry
 from app.services.wazuh import WazuhIndexerClient
 
 
-def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> APIRouter:
+def build_router(
+    settings: Settings,
+    metrics: MetricsRegistry | None = None,
+    *,
+    audit: AuditLogger | None = None,
+) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
     metrics = metrics or MetricsRegistry()
     scope = ScopePolicy.from_strings(settings.allowed_cidr_list)
     recon_service = ReconService(scope, timeout_seconds=settings.recon_timeout_seconds)
-    audit = AuditLogger(settings.audit_log_path)
+    audit = audit or AuditLogger(settings.audit_log_path)
     integration_kernel = IntegrationKernel(
         scope_validator=lambda targets: scope.validate_targets(list(targets)) if targets else None,
         audit_recorder=audit.record,
@@ -211,6 +217,22 @@ def build_router(settings: Settings, metrics: MetricsRegistry | None = None) -> 
             roles=list(principal.roles),
             session_version=principal.session_version,
         )
+
+    @protected_router.post("/auth/logout", response_model=AuthSessionRevokeResponse)
+    def auth_logout(request: Request) -> AuthSessionRevokeResponse:
+        raw_token = getattr(request.state, "access_token", None)
+        if not isinstance(raw_token, str) or not raw_token:
+            raise HTTPException(status_code=401, detail="authentication required")
+        revoked = identity.revoke(raw_token)
+        record_audit("auth.logout", {"revoked_sessions": int(revoked)})
+        return AuthSessionRevokeResponse(revoked_sessions=int(revoked))
+
+    @protected_router.post("/auth/sessions/revoke-all", response_model=AuthSessionRevokeResponse)
+    def auth_revoke_all_sessions() -> AuthSessionRevokeResponse:
+        principal = get_principal()
+        revoked = identity.revoke_all(principal)
+        record_audit("auth.sessions_revoked", {"revoked_sessions": revoked})
+        return AuthSessionRevokeResponse(revoked_sessions=revoked)
 
     @protected_router.post(
         "/auth/tenants",

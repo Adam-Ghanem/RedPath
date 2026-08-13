@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from uuid import uuid4
 
+from app.core.ownership import tenant_query
 from app.core.request_context import current_actor, current_tenant_id
 from app.db.models import AssessmentRun, Campaign, CampaignRunLink, EvidenceItem, RemediationItem, utcnow
 from app.schemas.contracts import (
@@ -63,20 +64,30 @@ def create_campaign(request: CampaignCreate, session_factory: SessionFactory) ->
 def list_campaigns(session_factory: SessionFactory) -> list[CampaignResponse]:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        rows = session.query(Campaign).filter_by(tenant_id=tenant_id).order_by(Campaign.updated_at.desc()).all()
+        rows = tenant_query(session.query(Campaign), Campaign, tenant_id).order_by(Campaign.updated_at.desc()).all()
     return [_campaign_response(row) for row in rows]
 
 
 def link_run(campaign_id: str, run_id: str, session_factory: SessionFactory) -> None:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        if session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first() is None:
+        if (
+            tenant_query(session.query(Campaign), Campaign, tenant_id)
+            .filter(Campaign.id == campaign_id)
+            .first()
+            is None
+        ):
             raise KeyError(f"Unknown campaign: {campaign_id}")
-        if session.query(AssessmentRun).filter_by(id=run_id, tenant_id=tenant_id).first() is None:
+        if (
+            tenant_query(session.query(AssessmentRun), AssessmentRun, tenant_id)
+            .filter(AssessmentRun.id == run_id)
+            .first()
+            is None
+        ):
             raise KeyError(f"Unknown assessment run: {run_id}")
         existing = (
-            session.query(CampaignRunLink)
-            .filter_by(campaign_id=campaign_id, run_id=run_id, tenant_id=tenant_id)
+            tenant_query(session.query(CampaignRunLink), CampaignRunLink, tenant_id)
+            .filter(CampaignRunLink.campaign_id == campaign_id, CampaignRunLink.run_id == run_id)
             .first()
         )
         if existing is None:
@@ -102,12 +113,16 @@ def create_evidence(request: EvidenceCreate, session_factory: SessionFactory) ->
     with session_factory() as session:
         if (
             request.campaign_id
-            and session.query(Campaign).filter_by(id=request.campaign_id, tenant_id=tenant_id).first() is None
+            and tenant_query(session.query(Campaign), Campaign, tenant_id)
+            .filter(Campaign.id == request.campaign_id)
+            .first() is None
         ):
             raise KeyError(f"Unknown campaign: {request.campaign_id}")
         if (
             request.run_id
-            and session.query(AssessmentRun).filter_by(id=request.run_id, tenant_id=tenant_id).first() is None
+            and tenant_query(session.query(AssessmentRun), AssessmentRun, tenant_id)
+            .filter(AssessmentRun.id == request.run_id)
+            .first() is None
         ):
             raise KeyError(f"Unknown assessment run: {request.run_id}")
         session.add(row)
@@ -124,7 +139,9 @@ def create_evidence(request: EvidenceCreate, session_factory: SessionFactory) ->
 def list_evidence(session_factory: SessionFactory, campaign_id: str | None = None) -> list[EvidenceResponse]:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        query = session.query(EvidenceItem).filter_by(tenant_id=tenant_id).order_by(EvidenceItem.created_at.desc())
+        query = tenant_query(session.query(EvidenceItem), EvidenceItem, tenant_id).order_by(
+            EvidenceItem.created_at.desc()
+        )
         rows = query.filter_by(campaign_id=campaign_id).all() if campaign_id else query.all()
     return [
         EvidenceResponse(
@@ -154,7 +171,7 @@ def create_remediation(request: RemediationCreate, session_factory: SessionFacto
         finding_title=request.finding_title,
         technique_id=request.technique_id,
         recommendation=request.recommendation,
-        owner=request.owner,
+        owner=current_actor(),
         priority=request.priority,
         status="open",
         due_date=request.due_date,
@@ -164,7 +181,9 @@ def create_remediation(request: RemediationCreate, session_factory: SessionFacto
     with session_factory() as session:
         if (
             request.campaign_id
-            and session.query(Campaign).filter_by(id=request.campaign_id, tenant_id=tenant_id).first() is None
+            and tenant_query(session.query(Campaign), Campaign, tenant_id)
+            .filter(Campaign.id == request.campaign_id)
+            .first() is None
         ):
             raise KeyError(f"Unknown campaign: {request.campaign_id}")
         session.add(row)
@@ -183,7 +202,9 @@ def list_remediations(session_factory: SessionFactory, campaign_id: str | None =
     tenant_id = current_tenant_id()
     with session_factory() as session:
         query = (
-            session.query(RemediationItem).filter_by(tenant_id=tenant_id).order_by(RemediationItem.updated_at.desc())
+            tenant_query(session.query(RemediationItem), RemediationItem, tenant_id).order_by(
+                RemediationItem.updated_at.desc()
+            )
         )
         rows = query.filter_by(campaign_id=campaign_id).all() if campaign_id else query.all()
     return [
@@ -207,15 +228,32 @@ def list_remediations(session_factory: SessionFactory, campaign_id: str | None =
 def campaign_timeline(campaign_id: str, session_factory: SessionFactory) -> list[CampaignTimelineEvent]:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        if session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first() is None:
+        if (
+            tenant_query(session.query(Campaign), Campaign, tenant_id)
+            .filter(Campaign.id == campaign_id)
+            .first()
+            is None
+        ):
             raise KeyError(f"Unknown campaign: {campaign_id}")
-        links = session.query(CampaignRunLink).filter_by(campaign_id=campaign_id, tenant_id=tenant_id).all()
-        evidence = session.query(EvidenceItem).filter_by(campaign_id=campaign_id, tenant_id=tenant_id).all()
-        remediations = session.query(RemediationItem).filter_by(campaign_id=campaign_id, tenant_id=tenant_id).all()
+        links = (
+            tenant_query(session.query(CampaignRunLink), CampaignRunLink, tenant_id)
+            .filter(CampaignRunLink.campaign_id == campaign_id)
+            .all()
+        )
+        evidence = (
+            tenant_query(session.query(EvidenceItem), EvidenceItem, tenant_id)
+            .filter(EvidenceItem.campaign_id == campaign_id)
+            .all()
+        )
+        remediations = (
+            tenant_query(session.query(RemediationItem), RemediationItem, tenant_id)
+            .filter(RemediationItem.campaign_id == campaign_id)
+            .all()
+        )
         run_ids = [link.run_id for link in links]
         run_rows = (
-            session.query(AssessmentRun)
-            .filter(AssessmentRun.id.in_(run_ids), AssessmentRun.tenant_id == tenant_id)
+            tenant_query(session.query(AssessmentRun), AssessmentRun, tenant_id)
+            .filter(AssessmentRun.id.in_(run_ids))
             .all()
             if run_ids
             else []
@@ -258,7 +296,9 @@ def risk_trend(session_factory: SessionFactory) -> list[TrendPoint]:
     tenant_id = current_tenant_id()
     with session_factory() as session:
         rows = (
-            session.query(AssessmentRun).filter_by(tenant_id=tenant_id).order_by(AssessmentRun.created_at.asc()).all()
+            tenant_query(session.query(AssessmentRun), AssessmentRun, tenant_id)
+            .order_by(AssessmentRun.created_at.asc())
+            .all()
         )
     buckets: dict[str, list[AssessmentRun]] = defaultdict(list)
     for row in rows:
@@ -278,7 +318,7 @@ def risk_trend(session_factory: SessionFactory) -> list[TrendPoint]:
 def detection_tuning_queue(session_factory: SessionFactory) -> list[DetectionTuningItem]:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        rows = session.query(AssessmentRun).filter_by(tenant_id=tenant_id).all()
+        rows = tenant_query(session.query(AssessmentRun), AssessmentRun, tenant_id).all()
     counts = Counter(gap for row in rows for gap in (row.gaps or []))
     metadata = {
         "T1558.003": (
@@ -394,7 +434,11 @@ def remediation_sla(session_factory: SessionFactory) -> list[RemediationSlaItem]
 def campaign_export(campaign_id: str, session_factory: SessionFactory) -> CampaignExport:
     tenant_id = current_tenant_id()
     with session_factory() as session:
-        campaign_row = session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first()
+        campaign_row = (
+            tenant_query(session.query(Campaign), Campaign, tenant_id)
+            .filter(Campaign.id == campaign_id)
+            .first()
+        )
     if campaign_row is None:
         raise KeyError(f"Unknown campaign: {campaign_id}")
     campaign = _campaign_response(campaign_row)

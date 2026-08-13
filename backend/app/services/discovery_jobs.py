@@ -105,6 +105,7 @@ class DiscoveryJobService:
             with self.session_factory() as session:
                 scan = ScanRun(
                     id=result.scan_id,
+                    tenant_id=tenant_id,
                     mode=profile,
                     dry_run=result.dry_run,
                     targets=result.targets,
@@ -116,8 +117,14 @@ class DiscoveryJobService:
                     asset_id = self._asset_id(tenant_id, observation.ip)
                     asset = session.get(Asset, asset_id)
                     if asset is None:
-                        asset = Asset(id=asset_id, scan_id=result.scan_id, ip=observation.ip)
+                        asset = Asset(
+                            id=asset_id,
+                            tenant_id=tenant_id,
+                            scan_id=result.scan_id,
+                            ip=observation.ip,
+                        )
                         session.add(asset)
+                    asset.tenant_id = tenant_id
                     asset.scan_id = result.scan_id
                     asset.ip = observation.ip
                     asset.hostname = observation.hostname
@@ -184,7 +191,7 @@ class DiscoveryJobService:
             statement = (
                 select(Asset, DiscoveryJob)
                 .join(DiscoveryJob, DiscoveryJob.scan_id == Asset.scan_id)
-                .where(DiscoveryJob.tenant_id == tenant_id)
+                .where(DiscoveryJob.tenant_id == tenant_id, Asset.tenant_id == tenant_id)
                 .order_by(Asset.ip.asc())
                 .limit(bounded_limit)
             )

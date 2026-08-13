@@ -8,6 +8,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from app.core.ownership import require_tenant_ids, tenant_query
+from app.core.request_context import maybe_principal
 from app.db.models import EvidenceItem, PcapAnalysis, utcnow
 from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary, PcapEndpoint, PcapObservation
 
@@ -313,6 +315,9 @@ def register_pcap_analysis(
     campaign_id: str | None,
     session_factory: SessionFactory,
 ) -> PcapAnalysisResponse:
+    principal = maybe_principal()
+    if principal is not None:
+        require_tenant_ids(principal, tenant_id)
     analysis = analyze_pcap(data, file_name)
     analysis_id = str(uuid.uuid4())
     evidence_id = str(uuid.uuid4())
@@ -321,11 +326,13 @@ def register_pcap_analysis(
         if campaign_id:
             from app.db.models import Campaign
 
-            if session.get(Campaign, campaign_id) is None:
+            campaign = session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first()
+            if campaign is None:
                 raise KeyError(f"Unknown campaign: {campaign_id}")
         session.add(
             EvidenceItem(
                 id=evidence_id,
+                tenant_id=tenant_id,
                 campaign_id=campaign_id,
                 evidence_type="pcap",
                 source="offline-upload",
@@ -358,8 +365,7 @@ def register_pcap_analysis(
 def list_pcap_analyses(tenant_id: str, session_factory: SessionFactory, limit: int = 20) -> list[PcapAnalysisSummary]:
     with session_factory() as session:
         rows = (
-            session.query(PcapAnalysis)
-            .filter_by(tenant_id=tenant_id)
+            tenant_query(session.query(PcapAnalysis), PcapAnalysis, tenant_id)
             .order_by(PcapAnalysis.created_at.desc())
             .limit(max(1, min(limit, 100)))
             .all()
@@ -381,7 +387,11 @@ def list_pcap_analyses(tenant_id: str, session_factory: SessionFactory, limit: i
 
 def get_pcap_analysis(analysis_id: str, tenant_id: str, session_factory: SessionFactory) -> PcapAnalysisResponse:
     with session_factory() as session:
-        row = session.query(PcapAnalysis).filter_by(id=analysis_id, tenant_id=tenant_id).one_or_none()
+        row = (
+            tenant_query(session.query(PcapAnalysis), PcapAnalysis, tenant_id)
+            .filter(PcapAnalysis.id == analysis_id)
+            .one_or_none()
+        )
     if row is None:
         raise KeyError(f"Unknown PCAP analysis: {analysis_id}")
     return PcapAnalysisResponse(

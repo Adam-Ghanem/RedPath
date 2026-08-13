@@ -9,6 +9,8 @@ from typing import Callable
 from fastapi import HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.core.audit import AuditLogger
+from app.core.errors import route_template
 from app.core.request_context import Principal, reset_principal, set_principal
 from app.services.identity import IdentityError, IdentityService
 
@@ -55,9 +57,17 @@ def _has_permission(principal: Principal, permission: str) -> bool:
     )
 
 
+def _audit(request: Request, operation: str, details: dict[str, object], *, actor: str = "anonymous") -> None:
+    application = request.scope.get("app")
+    logger = getattr(getattr(application, "state", None), "audit_logger", None)
+    if isinstance(logger, AuditLogger):
+        logger.record(operation, details, actor=actor)
+
+
 def rate_limit_dependency(limiter: RateLimiter) -> Callable:
     async def dependency(request: Request) -> None:
         if not limiter.allow(_client_key(request)):
+            _audit(request, "auth.rate_limited", {"route": route_template(request)})
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate limit exceeded")
 
     return dependency
@@ -67,6 +77,12 @@ def role_dependency(role: str) -> Callable:
     async def dependency(request: Request) -> Principal:
         principal = getattr(request.state, "principal", None)
         if principal is None or not principal.has_role(role):
+            _audit(
+                request,
+                "authz.role_denied",
+                {"required_role": role, "route": route_template(request)},
+                actor=getattr(principal, "username", "anonymous"),
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         return principal
 
@@ -77,6 +93,12 @@ def permission_dependency(permission: str) -> Callable:
     async def dependency(request: Request) -> Principal:
         principal = getattr(request.state, "principal", None)
         if principal is None or not _has_permission(principal, permission):
+            _audit(
+                request,
+                "authz.permission_denied",
+                {"required_permission": permission, "route": route_template(request)},
+                actor=getattr(principal, "username", "anonymous"),
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         return principal
 
@@ -89,22 +111,31 @@ def principal_dependency(identity: IdentityService, limiter: RateLimiter, permis
         credentials: HTTPAuthorizationCredentials | None = Security(BEARER),  # noqa: B008
     ) -> AsyncIterator[Principal]:
         if credentials is None or credentials.scheme.lower() != "bearer":
+            _audit(request, "auth.failed", {"reason": "missing_or_invalid_bearer"})
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="authentication required",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         if not limiter.allow(f"{_client_key(request)}:{credentials.credentials[:16]}"):
+            _audit(request, "auth.rate_limited", {"route": route_template(request)})
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate limit exceeded")
         try:
             principal = identity.resolve(credentials.credentials)
         except IdentityError as exc:
+            _audit(request, "auth.failed", {"reason": "invalid_or_expired_session"})
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid or expired access token",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
         if permission and not _has_permission(principal, permission):
+            _audit(
+                request,
+                "authz.permission_denied",
+                {"required_permission": permission, "route": route_template(request)},
+                actor=principal.username,
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         token = set_principal(principal)
         request.state.principal = principal

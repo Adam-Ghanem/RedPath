@@ -48,6 +48,10 @@ class AuthMeResponse(BaseModel):
     session_version: int
 
 
+class AuthSessionRevokeResponse(BaseModel):
+    revoked_sessions: int = Field(ge=0)
+
+
 class TenantCreateRequest(BaseModel):
     slug: str = Field(min_length=2, max_length=128, pattern=r"^[a-z0-9][a-z0-9-]{1,127}$")
     name: str = Field(min_length=2, max_length=255)

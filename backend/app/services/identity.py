@@ -169,12 +169,36 @@ class IdentityService:
                 session_version=user.session_version,
             )
 
-    def revoke(self, raw_token: str) -> None:
+    def revoke(self, raw_token: str) -> bool:
         with self.session_factory() as session:
             auth_session = session.query(AuthSession).filter_by(token_hash=self._token_hash(raw_token)).first()
-            if auth_session and auth_session.revoked_at is None:
-                auth_session.revoked_at = utcnow()
-                session.commit()
+            if auth_session is None or auth_session.revoked_at is not None:
+                return False
+            auth_session.revoked_at = utcnow()
+            session.commit()
+            return True
+
+    def revoke_all(self, principal: Principal) -> int:
+        with self.session_factory() as session:
+            user = (
+                session.query(User)
+                .filter_by(id=principal.user_id, tenant_id=principal.tenant_id, is_active=True)
+                .first()
+            )
+            if user is None:
+                raise InvalidCredentials("authenticated user is no longer active")
+            now = utcnow()
+            sessions = (
+                session.query(AuthSession)
+                .filter_by(user_id=user.id, tenant_id=principal.tenant_id)
+                .filter(AuthSession.revoked_at.is_(None))
+                .all()
+            )
+            for auth_session in sessions:
+                auth_session.revoked_at = now
+            user.session_version += 1
+            session.commit()
+            return len(sessions)
 
     def create_tenant(self, request: TenantCreateRequest) -> TenantResponse:
         with self.session_factory() as session:
