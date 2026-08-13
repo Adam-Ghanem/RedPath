@@ -21,6 +21,26 @@ from app.services.expert_ops import remediation_sla
 SessionFactory = Callable[[], object]
 
 
+class GovernanceViolation(ValueError):
+    """A requested governance transition violates the auditable state machine."""
+
+
+_EVIDENCE_TRANSITIONS = {
+    "unreviewed": {"in_review", "accepted", "rejected"},
+    "in_review": {"unreviewed", "accepted", "rejected"},
+    "rejected": {"in_review"},
+    "accepted": {"in_review"},
+}
+
+_REMEDIATION_TRANSITIONS = {
+    "open": {"in_progress", "blocked"},
+    "in_progress": {"open", "blocked", "resolved"},
+    "blocked": {"open", "in_progress", "resolved"},
+    "resolved": {"in_progress", "closed"},
+    "closed": set(),
+}
+
+
 def _evidence_response(row: EvidenceItem) -> EvidenceResponse:
     return EvidenceResponse(
         campaign_id=row.campaign_id,
@@ -49,6 +69,12 @@ def review_evidence(
         row = session.query(EvidenceItem).filter_by(id=evidence_id, tenant_id=tenant_id).first()
         if row is None:
             raise KeyError(f"Unknown evidence: {evidence_id}")
+        if request.review_status != row.review_status and request.review_status not in _EVIDENCE_TRANSITIONS.get(
+            row.review_status, set()
+        ):
+            raise GovernanceViolation(
+                f"evidence transition {row.review_status!r} -> {request.review_status!r} is not allowed"
+            )
         row.review_status = request.review_status
         row.reviewer = current_actor()
         row.reviewed_at = datetime.now(timezone.utc)
@@ -69,6 +95,8 @@ def update_remediation(
         row = session.query(RemediationItem).filter_by(id=remediation_id, tenant_id=tenant_id).first()
         if row is None:
             raise KeyError(f"Unknown remediation: {remediation_id}")
+        if request.status != row.status and request.status not in _REMEDIATION_TRANSITIONS.get(row.status, set()):
+            raise GovernanceViolation(f"remediation transition {row.status!r} -> {request.status!r} is not allowed")
         row.status = request.status
         row.updated_at = utcnow()
         if request.note:
