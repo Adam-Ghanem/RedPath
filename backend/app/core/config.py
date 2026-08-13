@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     audit_log_path: str = "./data/audit.jsonl"
     wazuh_indexer_url: str = "https://wazuh-indexer.local:9200"
     wazuh_verify_tls: bool = True
+    log_level: str = "INFO"
+    metrics_enabled: bool = True
+    release: str = "dev"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
