@@ -198,3 +198,28 @@ The database change is represented by `backend/migrations/001_ai03_discovery_job
 ## Security and operational limits
 
 The worker uses a small bounded thread pool (`REDPATH_RECON_MAX_WORKERS`, default `2` and capped at `4`), a per-command timeout (`REDPATH_RECON_TIMEOUT_SECONDS`, default `30`), a per-tenant submission rate limit (`REDPATH_DISCOVERY_MAX_JOBS_PER_MINUTE`, default `30`), and Pydantic validation limiting each request to 64 IP targets. The configured CIDR allow-list is checked before a job is persisted. Audit events record queue, rejection, completion, and failure metadata while excluding raw payloads. This module uses a single token-bound configured tenant as a fail-closed bridge until the shared identity/RBAC module supplies the platform-wide authorization provider.
+
+## AI risk assessment and SOC copilot
+
+The optional AI routes are protected by bearer authentication and the `analyze` permission. They are disabled by default through `AI_FEATURES_ENABLED=false`; enabling them requires an environment-provided `ANTHROPIC_API_KEY`. The key is never logged or returned. Provider failures, timeouts, rate limits, malformed responses, and disabled configuration fail open to deterministic context-only responses rather than stopping the API.
+
+| Method | Endpoint | Purpose | Safety behavior |
+| --- | --- | --- | --- |
+| POST | `/api/v1/risk/ai-assess` | Add a grounded explanation to one deterministic `RankedAttackPath` | The supplied risk tier and score remain authoritative; centrality is returned unchanged on fallback; bounded redacted context only |
+| POST | `/api/v1/copilot/explain` | Explain one tenant-scoped finding or recently analyzed attack path | Exactly one ID is accepted; finding lookup filters by authenticated tenant; path references expire from a bounded process-local registry; separate AI rate limit |
+
+The backend sends only a bounded projection of the selected context to the provider. Common secret assignments, credentials, tokens, authorization values, raw-event fields, and IP addresses are redacted. Operators should still complete their own data-governance review before enabling external processing. Copilot results are cached for the configured TTL, and cache keys use a SHA-256 fingerprint of the redacted context rather than storing a raw prompt identifier.
+
+`POST /api/v1/attack-paths/analyze` registers returned path projections in a short-lived tenant-scoped registry so a subsequent copilot request can use `attack_path_id`. This registry is not a source of truth or durable persistence; an expired or unknown path returns HTTP 404. The local MITRE registry is included as context when a technique mapping exists, and the model is instructed to make no claims beyond the supplied evidence.
+
+Example risk request:
+
+```json
+{
+  "path": {"path_id": "path-abc123", "risk_score": 82.0, "risk_level": "critical"},
+  "centrality_score": 0.75,
+  "detection_observations": []
+}
+```
+
+The complete `RankedAttackPath` object is required by the strict Pydantic contract; the abbreviated example above is illustrative only. The response contains `explanation`, `tier`, up to two `recommended_actions`, `confidence_note`, `centrality_score`, `deterministic_risk_score`, and `ai_enhanced`. The copilot response contains a concise explanation, evidence basis, confidence note, source identifier, cache indicator, and `ai_enhanced` status.

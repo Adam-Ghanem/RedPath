@@ -126,3 +126,16 @@ Contributions are welcome when they preserve RedPath’s safe, explainable, and 
 [2]: https://attack.mitre.org/techniques/T1558/004/ "MITRE ATT&CK: AS-REP Roasting"
 [3]: https://attack.mitre.org/techniques/T1649/ "MITRE ATT&CK: Steal or Forge Authentication Certificates"
 [4]: https://attack.mitre.org/techniques/T1021/002/ "MITRE ATT&CK: SMB/Windows Admin Shares"
+
+## AI Features
+
+RedPath’s AI features are an **optional enhancement layer** over deterministic defensive analysis. The graph and risk engines remain authoritative: AI does not enumerate networks, execute commands, replace path scoring, or make autonomous remediation changes.
+
+| Feature | Behavior | Fallback |
+| --- | --- | --- |
+| **AI risk assessment** | Adds a concise, evidence-grounded explanation and up to two recommended review actions to a modeled path. The deterministic risk tier and score remain authoritative. | Returns the deterministic path explanation, raw centrality score, modeled tier, and hardening actions when AI is disabled or unavailable. |
+| **SOC copilot** | Explains a tenant-scoped finding or recently analyzed attack path in no more than three concise paragraphs, using stored finding data and the local MITRE registry. | Returns a context-only summary without external model claims. |
+
+When enabled, the backend sends a **redacted and bounded projection** of the selected finding or path to the configured Anthropic Messages API. It excludes credentials, tokens, authorization values, raw payload fields, and IP addresses; operators should still review their data-governance requirements before enabling external processing. The model key is read only from `ANTHROPIC_API_KEY` and is never included in logs or error responses. Responses are cached for a configurable TTL, and copilot calls have a separate per-minute rate limit.
+
+AI is disabled by default. To keep it disabled, leave `AI_FEATURES_ENABLED=false` and do not configure an API key. To enable it in an authorized deployment, set `AI_FEATURES_ENABLED=true`, provide `ANTHROPIC_API_KEY` through a secret manager or environment variable, and review the remaining `AI_*` and `ANTHROPIC_*` settings in [`.env.example`](.env.example). CI tests mock provider responses and do not make live model calls.

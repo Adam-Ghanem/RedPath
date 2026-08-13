@@ -21,6 +21,7 @@ PUBLIC_PATHS = {
 
 PROTECTED_PATHS = {
     "/api/v1/attack-paths/analyze",
+    "/api/v1/copilot/explain",
     "/api/v1/auth/logout",
     "/api/v1/auth/me",
     "/api/v1/auth/sessions/revoke-all",
@@ -57,6 +58,7 @@ PROTECTED_PATHS = {
     "/api/v1/remediations/sla",
     "/api/v1/remediations/{remediation_id}/lifecycle",
     "/api/v1/reports/pdf",
+    "/api/v1/risk/ai-assess",
     "/api/v1/risk-acceptances",
     "/api/v1/risk/correlate",
     "/api/v1/runs",

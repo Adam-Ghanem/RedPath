@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     pcap_redaction_salt: str = "redpath-lab-redaction-salt"
     siem_max_query_window_hours: int = 24
     siem_request_timeout_seconds: int = 20
+    ai_features_enabled: bool = False
+    anthropic_api_key: str = ""
+    anthropic_api_url: str = "https://api.anthropic.com/v1/messages"
+    anthropic_model: str = "claude-haiku-4-5"
+    anthropic_timeout_seconds: float = 15.0
+    anthropic_max_tokens: int = 1200
+    ai_cache_ttl_seconds: int = 3600
+    ai_cache_max_entries: int = 2000
+    ai_requests_per_minute: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -4,7 +4,7 @@ from datetime import datetime
 from string import hexdigits
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator
+from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator, model_validator
 
 from app.models.domain import Asset as SharedAsset
 from app.models.telemetry import TelemetryEvent
@@ -794,3 +794,54 @@ class DetectionGapReport(BaseModel):
     observations: list[CoverageObservation]
     gaps: list[str]
     generated_at: datetime
+
+
+class AIRiskAssessmentRequest(BaseModel):
+    """Bounded context for on-demand AI augmentation of deterministic path risk."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: RankedAttackPath
+    centrality_score: float = Field(ge=0, le=1)
+    detection_observations: list[CoverageObservation] = Field(default_factory=list, max_length=100)
+
+
+class RiskAssessment(BaseModel):
+    """AI explanation constrained by the deterministic risk engine's result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    explanation: str = Field(min_length=1, max_length=3000)
+    tier: Literal["low", "medium", "high", "critical"]
+    recommended_actions: list[str] = Field(min_length=1, max_length=2)
+    confidence_note: str = Field(min_length=1, max_length=800)
+    centrality_score: float = Field(ge=0, le=1)
+    deterministic_risk_score: float = Field(ge=0, le=100)
+    ai_enhanced: bool = False
+
+
+class CopilotExplainRequest(BaseModel):
+    """Exactly one tenant-scoped source can be explained per request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str | None = Field(default=None, min_length=1, max_length=128)
+    attack_path_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def require_one_source(self) -> "CopilotExplainRequest":
+        if bool(self.finding_id) == bool(self.attack_path_id):
+            raise ValueError("exactly one of finding_id or attack_path_id is required")
+        return self
+
+
+class CopilotExplainResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: Literal["finding", "attack_path"]
+    source_id: str
+    explanation: str = Field(min_length=1, max_length=3000)
+    evidence_basis: list[str] = Field(default_factory=list, max_length=12)
+    confidence_note: str = Field(min_length=1, max_length=800)
+    ai_enhanced: bool = False
+    cached: bool = False

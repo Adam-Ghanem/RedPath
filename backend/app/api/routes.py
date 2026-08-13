@@ -21,7 +21,7 @@ from app.core.config import Settings
 from app.core.observability import MetricsRegistry
 from app.core.request_context import current_actor, get_principal, maybe_principal
 from app.core.scope import ScopePolicy, ScopeViolation
-from app.db.models import Asset, Campaign, EvidenceItem, create_session_factory
+from app.db.models import Asset, Campaign, EvidenceItem, Finding, create_session_factory
 from app.kernel.contracts import (
     CapabilityNegotiation,
     CapabilityNegotiationRequest,
@@ -44,6 +44,7 @@ from app.models.telemetry import (
 )
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
+    AIRiskAssessmentRequest,
     AssessmentRunSummary,
     AttackPathAnalysisRequest,
     AttackPathAnalysisResponse,
@@ -52,6 +53,8 @@ from app.schemas.contracts import (
     CampaignResponse,
     CampaignTimelineEvent,
     CaseStatusUpdate,
+    CopilotExplainRequest,
+    CopilotExplainResponse,
     CorrelatedRisk,
     CorrelationRequest,
     CoverageScorecard,
@@ -89,6 +92,7 @@ from app.schemas.contracts import (
     RemediationSlaItem,
     RiskAcceptanceCreate,
     RiskAcceptanceResponse,
+    RiskAssessment,
     ScenarioRunRequest,
     ScenarioRunResponse,
     ScenarioSpec,
@@ -107,6 +111,7 @@ from app.schemas.identity import (
 )
 from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary, PcapEvidenceView
 from app.services.ad_detection import detect_ad_findings
+from app.services.ai_risk import AIService
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
 from app.services.case_governance import list_governance_history
 from app.services.case_ops import list_cases, update_case_status
@@ -147,7 +152,7 @@ from app.services.identity import (
     IdentityService,
     InvalidCredentials,
 )
-from app.services.mitre import all_techniques
+from app.services.mitre import all_techniques, get_technique, technique_to_dict
 from app.services.pcap import (
     PcapFormatError,
     get_pcap_analysis,
@@ -188,6 +193,8 @@ def build_router(
     session_factory = create_session_factory(settings.database_url)
     identity = IdentityService(session_factory, settings.auth_bootstrap_token)
     limiter = RateLimiter(settings.rate_limit_requests_per_minute)
+    copilot_limiter = RateLimiter(settings.ai_requests_per_minute)
+    ai_service = AIService(settings)
     authenticate = principal_dependency(identity, limiter)
     protected_router = APIRouter(prefix="", dependencies=[Depends(authenticate)])
 
@@ -1295,6 +1302,106 @@ def build_router(
                 "asset_count": len(result.asset_ids),
                 "evidence_count": len(result.evidence_ids),
                 "remediation_link_count": len(result.remediation_links),
+            },
+        )
+        ai_service.path_registry.register(principal.tenant_id, result.ranked_paths)
+        return result
+
+    @protected_router.post(
+        "/risk/ai-assess",
+        response_model=RiskAssessment,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def risk_ai_assess(request: AIRiskAssessmentRequest) -> RiskAssessment:
+        result = ai_service.assess_risk(
+            request.path,
+            request.centrality_score,
+            request.detection_observations,
+        )
+        record_audit(
+            "risk.ai_assessed",
+            {
+                "path_id": request.path.path_id,
+                "ai_enhanced": result.ai_enhanced,
+                "deterministic_risk_score": result.deterministic_risk_score,
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/copilot/explain",
+        response_model=CopilotExplainResponse,
+        dependencies=[
+            Depends(permission_dependency("analyze")),
+            Depends(rate_limit_dependency(copilot_limiter)),
+        ],
+    )
+    def copilot_explain(request: CopilotExplainRequest) -> CopilotExplainResponse:
+        principal = get_principal()
+        if request.finding_id:
+            with session_factory() as session:
+                finding = (
+                    session.query(Finding)
+                    .filter(Finding.id == request.finding_id, Finding.tenant_id == principal.tenant_id)
+                    .first()
+                )
+            if finding is None:
+                raise HTTPException(status_code=404, detail="Finding not found")
+            context: dict = {
+                "title": finding.title,
+                "description": finding.description,
+                "severity": finding.severity,
+                "asset_id": finding.asset_id,
+                "technique_id": finding.technique_id,
+                "cvss_score": finding.cvss_score,
+                "evidence": finding.evidence,
+            }
+            evidence_basis = [
+                f"Finding severity: {finding.severity}",
+                f"Asset reference: {finding.asset_id or 'not recorded'}",
+            ]
+            if finding.technique_id:
+                try:
+                    context["mitre"] = technique_to_dict(get_technique(finding.technique_id))
+                    evidence_basis.append(f"MITRE technique: {finding.technique_id}")
+                except KeyError:
+                    context["mitre"] = {"technique_id": finding.technique_id, "status": "not in local registry"}
+            result = ai_service.explain_copilot(
+                source_type="finding",
+                source_id=finding.id,
+                context=context,
+                evidence_basis=evidence_basis,
+            )
+        else:
+            path_id = request.attack_path_id or ""
+            path = ai_service.path_registry.get(principal.tenant_id, path_id)
+            if path is None:
+                raise HTTPException(status_code=404, detail="Attack path not found or expired")
+            mitre_context = []
+            for technique_id in path.mitre_techniques:
+                try:
+                    mitre_context.append(technique_to_dict(get_technique(technique_id)))
+                except KeyError:
+                    mitre_context.append({"technique_id": technique_id, "status": "not in local registry"})
+            context = {"path": path.model_dump(mode="json"), "mitre": mitre_context}
+            evidence_basis = [
+                f"Deterministic path tier: {path.risk_level}",
+                f"Deterministic risk score: {path.risk_score:.1f}/100",
+                f"Evidence references: {len(path.evidence_ids)}",
+            ]
+            result = ai_service.explain_copilot(
+                source_type="attack_path",
+                source_id=path.path_id,
+                context=context,
+                evidence_basis=evidence_basis,
+            )
+        record_audit(
+            "copilot.explanation_generated",
+            {
+                "source_type": result.source_type,
+                "source_id": result.source_id,
+                "ai_enhanced": result.ai_enhanced,
+                "cached": result.cached,
             },
         )
         return result
