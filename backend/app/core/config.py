@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     audit_log_path: str = "./data/audit.jsonl"
     wazuh_indexer_url: str = "https://wazuh-indexer.local:9200"
     wazuh_verify_tls: bool = True
+    auth_bootstrap_token: str = ""
+    rate_limit_requests_per_minute: int = 120
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

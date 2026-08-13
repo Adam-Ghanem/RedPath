@@ -3,11 +3,19 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from app.core.audit import AuditLogger
+from app.core.auth import (
+    RateLimiter,
+    permission_dependency,
+    principal_dependency,
+    rate_limit_dependency,
+    role_dependency,
+)
 from app.core.config import Settings
+from app.core.request_context import current_actor, get_principal
 from app.core.scope import ScopePolicy, ScopeViolation
 from app.db.models import create_session_factory
 from app.plugins.registry import list_plugins
@@ -45,6 +53,16 @@ from app.schemas.contracts import (
     ScenarioSpec,
     TrendPoint,
 )
+from app.schemas.identity import (
+    AuthBootstrapRequest,
+    AuthLoginRequest,
+    AuthMeResponse,
+    AuthTokenResponse,
+    TenantCreateRequest,
+    TenantResponse,
+    UserCreateRequest,
+    UserResponse,
+)
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
 from app.services.expert_ops import (
@@ -71,6 +89,12 @@ from app.services.governance import (
     update_remediation,
 )
 from app.services.graph_engine import analyze_attack_graph
+from app.services.identity import (
+    BootstrapAlreadyCompleted,
+    DuplicateIdentity,
+    IdentityService,
+    InvalidCredentials,
+)
 from app.services.mitre import all_techniques
 from app.services.purple import build_detection_gap_report
 from app.services.recon import ReconService
@@ -85,32 +109,132 @@ def build_router(settings: Settings) -> APIRouter:
     recon_service = ReconService(scope, timeout_seconds=settings.recon_timeout_seconds)
     audit = AuditLogger(settings.audit_log_path)
     session_factory = create_session_factory(settings.database_url)
+    identity = IdentityService(session_factory, settings.auth_bootstrap_token)
+    limiter = RateLimiter(settings.rate_limit_requests_per_minute)
+    authenticate = principal_dependency(identity, limiter)
+    protected_router = APIRouter(prefix="", dependencies=[Depends(authenticate)])
+
+    def record_audit(operation: str, details: dict, *, actor: str | None = None) -> str:
+        return audit.record(operation, details, actor=actor or current_actor())
+
+    @router.post(
+        "/auth/bootstrap",
+        response_model=AuthTokenResponse,
+        status_code=201,
+        dependencies=[Depends(rate_limit_dependency(limiter))],
+    )
+    def auth_bootstrap(request: AuthBootstrapRequest) -> AuthTokenResponse:
+        if not settings.auth_bootstrap_token:
+            raise HTTPException(
+                status_code=503, detail="bootstrap is disabled until REDPATH_AUTH_BOOTSTRAP_TOKEN is configured"
+            )
+        try:
+            token = identity.bootstrap(request)
+        except BootstrapAlreadyCompleted as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except InvalidCredentials as exc:
+            raise HTTPException(status_code=401, detail="invalid bootstrap credentials") from exc
+        record_audit(
+            "auth.bootstrap_completed",
+            {"tenant_slug": request.tenant_slug, "username": request.username},
+            actor="bootstrap",
+        )
+        return token
+
+    @router.post(
+        "/auth/token", response_model=AuthTokenResponse, dependencies=[Depends(rate_limit_dependency(limiter))]
+    )
+    def auth_token(request: AuthLoginRequest) -> AuthTokenResponse:
+        try:
+            token = identity.login(request)
+        except InvalidCredentials as exc:
+            raise HTTPException(status_code=401, detail="invalid credentials") from exc
+        record_audit("auth.login", {"tenant_slug": token.tenant_slug, "username": token.username}, actor=token.username)
+        return token
+
+    @protected_router.get("/auth/me", response_model=AuthMeResponse)
+    def auth_me() -> AuthMeResponse:
+        principal = get_principal()
+        return AuthMeResponse(
+            user_id=principal.user_id,
+            username=principal.username,
+            tenant_id=principal.tenant_id,
+            tenant_slug=principal.tenant_slug,
+            roles=list(principal.roles),
+            session_version=principal.session_version,
+        )
+
+    @protected_router.post(
+        "/auth/tenants",
+        response_model=TenantResponse,
+        status_code=201,
+        dependencies=[Depends(role_dependency("platform_admin"))],
+    )
+    def auth_tenant_create(request: TenantCreateRequest) -> TenantResponse:
+        try:
+            result = identity.create_tenant(request)
+        except DuplicateIdentity as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit("auth.tenant_created", {"tenant_id": result.tenant_id, "slug": result.slug})
+        return result
+
+    @protected_router.post(
+        "/auth/users",
+        response_model=UserResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_identity"))],
+    )
+    def auth_user_create(request: UserCreateRequest) -> UserResponse:
+        principal = get_principal()
+        try:
+            result = identity.create_user(principal, request)
+        except DuplicateIdentity as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit("auth.user_created", {"user_id": result.user_id, "roles": result.roles}, actor=current_actor())
+        return result
+
+    @protected_router.get(
+        "/auth/users",
+        response_model=list[UserResponse],
+        dependencies=[Depends(permission_dependency("manage_identity"))],
+    )
+    def auth_users() -> list[UserResponse]:
+        principal = get_principal()
+        return identity.list_users(principal)
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
         return {"status": "ok", "service": settings.app_name, "dry_run_default": settings.dry_run}
 
-    @router.get("/scope")
+    @protected_router.get("/scope", dependencies=[Depends(permission_dependency("read"))])
     def get_scope() -> dict[str, list[str] | bool]:
         return {"allowed_cidrs": list(scope.allowed_cidrs), "dry_run_default": settings.dry_run}
 
-    @router.get("/techniques")
+    @protected_router.get("/techniques", dependencies=[Depends(permission_dependency("read"))])
     def techniques() -> list[dict]:
         return all_techniques()
 
-    @router.get("/plugins")
+    @protected_router.get("/plugins", dependencies=[Depends(permission_dependency("read"))])
     def plugins() -> list[dict]:
         return list_plugins()
 
-    @router.get("/scenarios", response_model=list[ScenarioSpec])
+    @protected_router.get(
+        "/scenarios", response_model=list[ScenarioSpec], dependencies=[Depends(permission_dependency("read"))]
+    )
     def scenarios() -> list[ScenarioSpec]:
         return list_scenarios()
 
-    @router.get("/runs", response_model=list[AssessmentRunSummary])
+    @protected_router.get(
+        "/runs", response_model=list[AssessmentRunSummary], dependencies=[Depends(permission_dependency("read"))]
+    )
     def runs(limit: int = 20) -> list[AssessmentRunSummary]:
         return list_run_summaries(session_factory, max(1, min(limit, 100)))
 
-    @router.post("/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse)
+    @protected_router.post(
+        "/scenarios/{scenario_id}/run",
+        response_model=ScenarioRunResponse,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
     def scenario_run(scenario_id: str, request: ScenarioRunRequest) -> ScenarioRunResponse:
         if request.scenario_id != scenario_id:
             raise HTTPException(status_code=400, detail="scenario_id in path and body must match")
@@ -118,7 +242,7 @@ def build_router(settings: Settings) -> APIRouter:
             result = execute_scenario(request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "scenario.completed",
             {
                 "run_id": result.run_id,
@@ -130,145 +254,219 @@ def build_router(settings: Settings) -> APIRouter:
         )
         return result
 
-    @router.get("/campaigns", response_model=list[CampaignResponse])
+    @protected_router.get(
+        "/campaigns", response_model=list[CampaignResponse], dependencies=[Depends(permission_dependency("read"))]
+    )
     def campaigns() -> list[CampaignResponse]:
         return list_campaigns(session_factory)
 
-    @router.post("/campaigns", response_model=CampaignResponse, status_code=201)
+    @protected_router.post(
+        "/campaigns",
+        response_model=CampaignResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
     def campaign_create(request: CampaignCreate) -> CampaignResponse:
         result = create_campaign(request, session_factory)
-        audit.record("campaign.created", {"campaign_id": result.campaign_id, "owner": result.owner})
+        record_audit("campaign.created", {"campaign_id": result.campaign_id, "owner": result.owner})
         return result
 
-    @router.post("/campaigns/{campaign_id}/runs/{run_id}", status_code=204)
+    @protected_router.post(
+        "/campaigns/{campaign_id}/runs/{run_id}",
+        status_code=204,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
     def campaign_link_run(campaign_id: str, run_id: str) -> None:
         try:
             link_run(campaign_id, run_id, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record("campaign.run_linked", {"campaign_id": campaign_id, "run_id": run_id})
+        record_audit("campaign.run_linked", {"campaign_id": campaign_id, "run_id": run_id})
 
-    @router.get("/campaigns/{campaign_id}/timeline", response_model=list[CampaignTimelineEvent])
+    @protected_router.get(
+        "/campaigns/{campaign_id}/timeline",
+        response_model=list[CampaignTimelineEvent],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def campaign_timeline_route(campaign_id: str) -> list[CampaignTimelineEvent]:
         try:
             return campaign_timeline(campaign_id, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @router.get("/integrity/audit", response_model=IntegrityVerification)
+    @protected_router.get(
+        "/integrity/audit",
+        response_model=IntegrityVerification,
+        dependencies=[Depends(permission_dependency("view_audit"))],
+    )
     def audit_integrity() -> IntegrityVerification:
         return IntegrityVerification(**audit.verify())
 
-    @router.get("/evidence", response_model=list[EvidenceResponse])
+    @protected_router.get(
+        "/evidence", response_model=list[EvidenceResponse], dependencies=[Depends(permission_dependency("read"))]
+    )
     def evidence(campaign_id: str | None = None) -> list[EvidenceResponse]:
         return list_evidence(session_factory, campaign_id)
 
-    @router.get("/evidence/{evidence_id}/manifest", response_model=EvidenceManifest)
+    @protected_router.get(
+        "/evidence/{evidence_id}/manifest",
+        response_model=EvidenceManifest,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def evidence_manifest_route(evidence_id: str) -> EvidenceManifest:
         try:
             return evidence_manifest(evidence_id, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @router.patch("/evidence/{evidence_id}/review", response_model=EvidenceResponse)
+    @protected_router.patch(
+        "/evidence/{evidence_id}/review",
+        response_model=EvidenceResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
     def evidence_review(evidence_id: str, request: EvidenceReviewUpdate) -> EvidenceResponse:
         try:
             result = review_evidence(evidence_id, request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "evidence.reviewed",
             {"evidence_id": evidence_id, "status": result.review_status, "reviewer": result.reviewer},
         )
         return result
 
-    @router.post("/evidence", response_model=EvidenceResponse, status_code=201)
+    @protected_router.post(
+        "/evidence",
+        response_model=EvidenceResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
     def evidence_create(request: EvidenceCreate) -> EvidenceResponse:
         try:
             result = create_evidence(request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record("evidence.registered", {"evidence_id": result.evidence_id, "sha256": result.sha256})
+        record_audit("evidence.registered", {"evidence_id": result.evidence_id, "sha256": result.sha256})
         return result
 
-    @router.get("/remediations", response_model=list[RemediationResponse])
+    @protected_router.get(
+        "/remediations", response_model=list[RemediationResponse], dependencies=[Depends(permission_dependency("read"))]
+    )
     def remediations(campaign_id: str | None = None) -> list[RemediationResponse]:
         return list_remediations(session_factory, campaign_id)
 
-    @router.post("/remediations", response_model=RemediationResponse, status_code=201)
+    @protected_router.post(
+        "/remediations",
+        response_model=RemediationResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
     def remediation_create(request: RemediationCreate) -> RemediationResponse:
         try:
             result = create_remediation(request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record("remediation.created", {"remediation_id": result.remediation_id, "priority": result.priority})
+        record_audit("remediation.created", {"remediation_id": result.remediation_id, "priority": result.priority})
         return result
 
-    @router.patch("/remediations/{remediation_id}/lifecycle", response_model=RemediationResponse)
+    @protected_router.patch(
+        "/remediations/{remediation_id}/lifecycle",
+        response_model=RemediationResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
     def remediation_lifecycle(remediation_id: str, request: RemediationLifecycleUpdate) -> RemediationResponse:
         try:
             result = update_remediation(remediation_id, request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "remediation.lifecycle_updated",
-            {"remediation_id": remediation_id, "status": result.status, "actor": request.actor},
+            {"remediation_id": remediation_id, "status": result.status, "actor": current_actor()},
         )
         return result
 
-    @router.get("/risk-acceptances", response_model=list[RiskAcceptanceResponse])
+    @protected_router.get(
+        "/risk-acceptances",
+        response_model=list[RiskAcceptanceResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def risk_acceptances() -> list[RiskAcceptanceResponse]:
         return list_risk_acceptances(session_factory)
 
-    @router.post("/risk-acceptances", response_model=RiskAcceptanceResponse, status_code=201)
+    @protected_router.post(
+        "/risk-acceptances",
+        response_model=RiskAcceptanceResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
     def risk_acceptance_create(request: RiskAcceptanceCreate) -> RiskAcceptanceResponse:
         try:
             result = create_risk_acceptance(request, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "risk.accepted",
             {"acceptance_id": result.acceptance_id, "approver": result.approver, "expires_on": result.expires_on},
         )
         return result
 
-    @router.get("/scorecards/coverage", response_model=CoverageScorecard)
+    @protected_router.get(
+        "/scorecards/coverage", response_model=CoverageScorecard, dependencies=[Depends(permission_dependency("read"))]
+    )
     def coverage_scorecard_route() -> CoverageScorecard:
         return coverage_scorecard(session_factory)
 
-    @router.get("/kpis/executive", response_model=ExecutiveKpis)
+    @protected_router.get(
+        "/kpis/executive", response_model=ExecutiveKpis, dependencies=[Depends(permission_dependency("read"))]
+    )
     def executive_kpis_route() -> ExecutiveKpis:
         return executive_kpis(session_factory)
 
-    @router.get("/remediations/sla", response_model=list[RemediationSlaItem])
+    @protected_router.get(
+        "/remediations/sla",
+        response_model=list[RemediationSlaItem],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def remediation_sla_route() -> list[RemediationSlaItem]:
         return remediation_sla(session_factory)
 
-    @router.get("/trends/risk", response_model=list[TrendPoint])
+    @protected_router.get(
+        "/trends/risk", response_model=list[TrendPoint], dependencies=[Depends(permission_dependency("read"))]
+    )
     def risk_trends() -> list[TrendPoint]:
         return risk_trend(session_factory)
 
-    @router.get("/campaigns/{campaign_id}/export", response_model=CampaignExport)
+    @protected_router.get(
+        "/campaigns/{campaign_id}/export",
+        response_model=CampaignExport,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def campaign_export_route(campaign_id: str) -> CampaignExport:
         try:
             return campaign_export(campaign_id, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @router.get("/detection-tuning", response_model=list[DetectionTuningItem])
+    @protected_router.get(
+        "/detection-tuning",
+        response_model=list[DetectionTuningItem],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
     def detection_tuning() -> list[DetectionTuningItem]:
         return detection_tuning_queue(session_factory)
 
-    @router.post("/recon", response_model=ReconResult)
+    @protected_router.post(
+        "/recon", response_model=ReconResult, dependencies=[Depends(permission_dependency("analyze"))]
+    )
     def recon(request: ReconRequest) -> ReconResult:
         requested_targets = [str(target) for target in request.targets]
         effective_dry_run = settings.dry_run or request.dry_run
         try:
             result = recon_service.run(requested_targets, request.profile, effective_dry_run)
         except ScopeViolation as exc:
-            audit.record("recon.rejected", {"targets": requested_targets, "reason": str(exc)})
+            record_audit("recon.rejected", {"targets": requested_targets, "reason": str(exc)})
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "recon.completed",
             {
                 "scan_id": result.scan_id,
@@ -280,37 +478,45 @@ def build_router(settings: Settings) -> APIRouter:
         )
         return result
 
-    @router.post("/detections/ad", response_model=list[FindingInput])
+    @protected_router.post(
+        "/detections/ad", response_model=list[FindingInput], dependencies=[Depends(permission_dependency("analyze"))]
+    )
     def ad_detections(observations: list[dict]) -> list[FindingInput]:
         findings = detect_ad_findings(observations)
-        audit.record("ad.detection_analysis", {"observation_count": len(observations), "finding_count": len(findings)})
+        record_audit("ad.detection_analysis", {"observation_count": len(observations), "finding_count": len(findings)})
         return findings
 
-    @router.post("/risk/correlate", response_model=list[CorrelatedRisk])
+    @protected_router.post(
+        "/risk/correlate", response_model=list[CorrelatedRisk], dependencies=[Depends(permission_dependency("analyze"))]
+    )
     def risk_correlate(request: CorrelationRequest) -> list[CorrelatedRisk]:
         results = correlate_findings(request.findings, request.graph)
-        audit.record("risk.correlated", {"finding_count": len(request.findings), "result_count": len(results)})
+        record_audit("risk.correlated", {"finding_count": len(request.findings), "result_count": len(results)})
         return results
 
-    @router.post("/graph/analyze", response_model=GraphResult)
+    @protected_router.post(
+        "/graph/analyze", response_model=GraphResult, dependencies=[Depends(permission_dependency("analyze"))]
+    )
     def graph_analyze(request: GraphRequest) -> GraphResult:
         try:
             result = analyze_attack_graph(request)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "graph.analyzed",
             {"source": request.source_node, "target": request.target_node, "node_count": len(request.nodes)},
         )
         return result
 
-    @router.post("/purple/analyze", response_model=DetectionGapReport)
+    @protected_router.post(
+        "/purple/analyze", response_model=DetectionGapReport, dependencies=[Depends(permission_dependency("analyze"))]
+    )
     def purple_analyze(request: PurpleAnalysisRequest) -> DetectionGapReport:
         try:
             report = build_detection_gap_report(request.expected_technique_ids, request.alerts)
         except KeyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        audit.record(
+        record_audit(
             "purple.coverage_analyzed",
             {
                 "run_id": report.run_id,
@@ -321,14 +527,15 @@ def build_router(settings: Settings) -> APIRouter:
         )
         return report
 
-    @router.post("/reports/pdf")
+    @protected_router.post("/reports/pdf", dependencies=[Depends(permission_dependency("read"))])
     def report_pdf(payload: dict) -> FileResponse:
         findings = [FindingInput.model_validate(item) for item in payload.get("findings", [])]
         coverage_payload = payload.get("coverage")
         coverage = DetectionGapReport.model_validate(coverage_payload) if coverage_payload else None
-        event_id = audit.record("report.generated", {"finding_count": len(findings)})
+        event_id = record_audit("report.generated", {"finding_count": len(findings)})
         output = Path(tempfile.gettempdir()) / f"redpath-report-{event_id}.pdf"
         generate_pdf_report(str(output), findings, coverage)
         return FileResponse(output, media_type="application/pdf", filename="redpath-assessment.pdf")
 
+    router.include_router(protected_router)
     return router

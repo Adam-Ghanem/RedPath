@@ -1,10 +1,15 @@
 # RedPath API design
 
-The API is versioned under `/api/v1` and returns JSON models that are stable enough for the React console and future CLI clients. All write-like operations create an audit record. The API is intentionally read-mostly with respect to external systems: Wazuh querying is read-only, while report generation only writes a local artifact.
+The API is versioned under `/api/v1` and returns JSON models that are stable enough for the React console and future CLI clients. All write-like operations create an audit record. The API is intentionally read-mostly with respect to external systems: Wazuh querying is read-only, while report generation only writes a local artifact. Except for health, one-time bootstrap, and token issuance, endpoints require a bearer session and tenant-aware RBAC; see [Identity, tenancy, RBAC, and API protection](identity-rbac.md).
 
 | Method | Endpoint | Purpose | Safety behavior |
 | --- | --- | --- | --- |
-| GET | `/api/v1/health` | Service health and default mode | No external side effect |
+| GET | `/api/v1/health` | Service health and default mode | Public liveness check; no external side effect |
+| POST | `/api/v1/auth/bootstrap` | Create the first tenant and administrator session | One-time, configuration-gated, rate-limited |
+| POST | `/api/v1/auth/token` | Issue a short-lived opaque bearer session | Rate-limited; raw token is not persisted |
+| GET | `/api/v1/auth/me` | Inspect the authenticated principal and tenant | Requires bearer authentication |
+| POST | `/api/v1/auth/tenants` | Provision a tenant and initial local administrator | Platform-admin role required |
+| GET/POST | `/api/v1/auth/users` | List or create users in the current tenant | Tenant-admin or platform-admin role required |
 | GET | `/api/v1/scope` | Show allowed CIDRs and dry-run default | Does not expose credentials |
 | GET | `/api/v1/techniques` | Return supported MITRE mappings | Static registry read |
 | GET | `/api/v1/scenarios` | Return curated safe assessment playbooks | Static catalog read |
@@ -90,4 +95,4 @@ The report calculates coverage as detected expected techniques divided by expect
 
 ## Error semantics
 
-A target outside the allow-list returns HTTP 403. A malformed graph or unknown technique returns HTTP 422. The service returns structured FastAPI validation errors for malformed payloads. Audit events include a request operation, the effective dry-run mode, relevant identifiers, and a chained digest.
+Missing or invalid bearer credentials return HTTP 401 with a bearer challenge. A valid principal without the required role or permission returns HTTP 403, and a bounded request budget returns HTTP 429. A target outside the allow-list also returns HTTP 403. A malformed graph or unknown technique returns HTTP 422. The service returns structured FastAPI validation errors for malformed payloads. Audit events include a request operation, the authenticated actor, the effective dry-run mode, relevant identifiers, and a chained digest.

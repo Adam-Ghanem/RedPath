@@ -8,4 +8,5 @@ httpx==0.28.1
 pytest==9.1.1
 ruff==0.9.4
 bandit==1.8.0
+argon2-cffi==25.1.0
 fpdf2==2.8.8
