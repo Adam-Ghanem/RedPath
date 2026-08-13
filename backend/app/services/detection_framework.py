@@ -41,6 +41,9 @@ _BUILTIN_RULES = [
         window_seconds=300,
         group_by=["data.srcuser"],
         deployment_status="testing",
+        owner="redpath-detection",
+        telemetry_requirements=["wazuh.security"],
+        tags=["identity", "kerberos"],
     ),
     DetectionRule(
         rule_id="ad.asrep.preauth-disabled",
@@ -56,6 +59,9 @@ _BUILTIN_RULES = [
         window_seconds=300,
         group_by=["data.srcuser"],
         deployment_status="testing",
+        owner="redpath-detection",
+        telemetry_requirements=["wazuh.security"],
+        tags=["identity", "kerberos"],
     ),
     DetectionRule(
         rule_id="adcs.template.client-auth",
@@ -72,6 +78,9 @@ _BUILTIN_RULES = [
         window_seconds=300,
         group_by=["data.host"],
         deployment_status="testing",
+        owner="redpath-detection",
+        telemetry_requirements=["wazuh.security"],
+        tags=["identity", "adcs"],
     ),
 ]
 
@@ -257,6 +266,7 @@ def _rule_content_sha256(rule: DetectionRule) -> str:
 
 def _telemetry_event_to_alert(event: TelemetryEvent) -> WazuhAlert:
     data: dict[str, Any] = dict(event.safe_fields)
+    data.update(event.correlation_fields)
     data["source"] = event.source
     data["technique_ids"] = list(event.technique_ids)
     if event.rule_id:
@@ -282,6 +292,10 @@ class DetectionRuleCatalog:
     def add_rule(self, rule: DetectionRule) -> DetectionRule:
         if rule.deployment_status == "production" and not rule.requires_approval:
             raise ValueError("production rules must require approval")
+        if rule.deployment_status == "production" and (
+            rule.approval_state != "approved" or not rule.reviewed_by or rule.reviewed_at is None
+        ):
+            raise ValueError("production rules require approved state, reviewer, review timestamp, and approval flag")
         if rule.rule_id in self._rules:
             raise ValueError(f"rule_id already exists: {rule.rule_id}")
         self._rules[rule.rule_id] = rule.model_copy(deep=True)

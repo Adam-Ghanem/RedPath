@@ -57,6 +57,7 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | POST | `/api/v1/detections/regressions/run` | Run legacy synthetic detection fixtures | Read-only, audit logged |
 | POST | `/api/v1/detections/coverage` | Score rules against normalized telemetry and path evidence | Analyze permission; tenant and actor derived server-side; dry-run safe |
 | POST | `/api/v1/detections/regressions/normalized` | Run bounded normalized-telemetry regression fixtures | Analyze permission; raw telemetry excluded from report; dry-run safe |
+| POST | `/api/v1/detections/lifecycle/gate` | Validate a versioned detection pack and run its regression/coverage baselines | Analyze permission; server-derived tenant/actor; safe dry-run gate; audit logged |
 | POST | `/api/v1/siem/telemetry/ingest` | Retrieve and persist redacted, tenant-scoped Wazuh projections | RBAC-protected read-only external query; bounded window; audit logged |
 | GET | `/api/v1/siem/telemetry` | Read redacted local telemetry projections | RBAC-protected; server-derived tenant predicate; audit logged |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
@@ -183,6 +184,14 @@ The report calculates coverage as detected expected techniques divided by expect
 ## SIEM/Wazuh telemetry ingestion
 
 The ingestion contract and operator guidance are documented in [`docs/siem-ingestion.md`](siem-ingestion.md). Both telemetry endpoints require authenticated bearer credentials: ingestion requires the `analyze` permission and readback requires `read`. The service derives the tenant from the authenticated session and rejects an ingestion payload for another tenant. The raw Wazuh document is never returned or stored; only a bounded normalized projection and a SHA-256 provenance digest are retained. The external adapter is limited to the configured Wazuh alerts search index and has no mutation methods.
+
+## Governed detection lifecycle
+
+The governed lifecycle is documented in [`docs/detection-lifecycle.md`](detection-lifecycle.md). Detection-as-code manifests live under `detections/pack.json`, while synthetic normalized fixtures live under `detections/fixtures/`. A pack pins rule IDs to exact versions and declares minimum true-positive and coverage baselines. Production rules must include explicit approval state, reviewer, and review timestamp.
+
+`POST /api/v1/detections/lifecycle/gate` validates safe MITRE mappings and declarative rule logic, verifies fixture-to-rule assignments, executes the regression and coverage baselines in dry-run mode, and returns explainable outcomes with rule provenance hashes, normalized event IDs, and rationale. Structural or tenant failures are reported as `blocked`; metric failures are reported as `failed`. The endpoint is protected by bearer authentication and the `analyze` permission, and the tenant and actor are derived from the authenticated session.
+
+The repository CI gate is `python3 scripts/validate_detection_pack.py`. It has no network or remote-state behavior and exits nonzero when package governance or quality baselines fail.
 
 ## Detection coverage and normalized regression reporting
 

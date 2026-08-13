@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "pack_id": "redpath-detection-core",
+  "pack_version": 1,
+  "owner": "redpath-detection",
+  "rules": [
+    {
+      "rule_id": "ad.kerberoasting.service-ticket",
+      "version": 1,
+      "fixture_ids": [
+        "ad.kerberoasting.positive",
+        "ad.kerberoasting.negative"
+      ]
+    },
+    {
+      "rule_id": "ad.asrep.preauth-disabled",
+      "version": 1,
+      "fixture_ids": [
+        "ad.asrep.positive"
+      ]
+    },
+    {
+      "rule_id": "adcs.template.client-auth",
+      "version": 1,
+      "fixture_ids": [
+        "adcs.template.positive"
+      ]
+    }
+  ],
+  "baseline": {
+    "min_true_positive_rate": 100.0,
+    "max_false_positive_rate": 0.0,
+    "min_rule_coverage_percent": 100.0,
+    "min_path_coverage_percent": 0.0
+  }
+}

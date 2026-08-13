@@ -65,6 +65,8 @@ from app.schemas.contracts import (
     DetectionEvaluationRequest,
     DetectionEvaluationResponse,
     DetectionGapReport,
+    DetectionLifecycleGateRequest,
+    DetectionLifecycleGateResponse,
     DetectionRule,
     DetectionRuleCreate,
     DetectionTuningItem,
@@ -140,6 +142,7 @@ from app.services.copilot_explanation import build_copilot_service
 from app.services.copilot_sources import CopilotSourceNotFound, register_attack_path_analysis, resolve_copilot_source
 from app.services.correlation import correlate_findings
 from app.services.detection_framework import DetectionRuleCatalog
+from app.services.detection_lifecycle import DetectionLifecycleService
 from app.services.discovery_jobs import (
     DiscoveryJobNotFound,
     DiscoveryJobService,
@@ -483,6 +486,7 @@ def build_router(
         metrics=metrics,
     )
     detection_catalog = DetectionRuleCatalog()
+    detection_lifecycle = DetectionLifecycleService(detection_catalog)
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
@@ -1532,6 +1536,39 @@ def build_router(
                 "total_cases": result.total_cases,
                 "false_positive_rate": result.false_positive_rate,
             },
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/lifecycle/gate",
+        response_model=DetectionLifecycleGateResponse,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_lifecycle_gate(request: DetectionLifecycleGateRequest) -> DetectionLifecycleGateResponse:
+        principal = get_principal()
+        try:
+            result = detection_lifecycle.run_gate(
+                request.pack,
+                request.fixtures,
+                tenant_id=principal.tenant_id,
+                actor=principal.username,
+                rule_ids=request.rule_ids,
+                dry_run=settings.dry_run or request.dry_run,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        audit.record(
+            "detection.lifecycle_gate_completed",
+            {
+                "gate_id": result.gate_id,
+                "pack_id": result.pack_id,
+                "pack_version": result.pack_version,
+                "status": result.status,
+                "rule_count": len(result.validation),
+                "error_count": len(result.errors),
+                "dry_run": result.dry_run,
+            },
+            actor=principal.username,
         )
         return result
 

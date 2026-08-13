@@ -455,6 +455,7 @@ class DetectionCondition(BaseModel):
 class DetectionRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal["1.0"] = "1.0"
     rule_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
     version: int = Field(default=1, ge=1, le=10_000)
     title: str = Field(min_length=3, max_length=255)
@@ -468,12 +469,33 @@ class DetectionRule(BaseModel):
     group_by: list[str] = Field(default_factory=list, max_length=3)
     enabled: bool = True
     false_positive_sla_percent: float = Field(default=5.0, ge=0, le=100)
+    telemetry_requirements: list[str] = Field(default_factory=list, max_length=16)
+    coverage_type: Literal["prevention", "detection", "response"] = "detection"
+    mttd_target_seconds: int = Field(default=900, ge=1, le=86400)
+    owner: str = Field(default="", max_length=128)
+    tags: list[str] = Field(default_factory=list, max_length=16)
     deployment_status: Literal["draft", "testing", "production"] = "testing"
+    approval_state: Literal["not_required", "pending", "approved", "rejected"] = "pending"
+    reviewed_by: str | None = Field(default=None, max_length=128)
+    reviewed_at: datetime | None = None
     requires_approval: bool = True
 
 
 class DetectionRuleCreate(DetectionRule):
     pass
+
+
+class DetectionRuleValidationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: str
+    version: int = Field(ge=1)
+    valid: bool
+    mitre_valid: bool
+    safe_logic: bool
+    approval_valid: bool
+    errors: list[str] = Field(default_factory=list, max_length=32)
+    warnings: list[str] = Field(default_factory=list, max_length=32)
 
 
 class DetectionRuleProvenance(BaseModel):
@@ -662,6 +684,66 @@ class NormalizedRegressionReport(BaseModel):
     generated_at: datetime
     dry_run: bool
     warnings: list[str] = Field(default_factory=list)
+
+
+class DetectionBaseline(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_true_positive_rate: float = Field(default=100.0, ge=0, le=100)
+    max_false_positive_rate: float = Field(default=5.0, ge=0, le=100)
+    min_rule_coverage_percent: float = Field(default=100.0, ge=0, le=100)
+    min_path_coverage_percent: float = Field(default=0.0, ge=0, le=100)
+
+
+class DetectionPackRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    version: int = Field(ge=1)
+    fixture_ids: list[str] = Field(min_length=1, max_length=128)
+
+
+class DetectionPackManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = "1.0"
+    pack_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    pack_version: int = Field(ge=1, le=10_000)
+    owner: str = Field(min_length=1, max_length=128)
+    rules: list[DetectionPackRule] = Field(min_length=1, max_length=128)
+    baseline: DetectionBaseline = Field(default_factory=DetectionBaseline)
+
+
+class DetectionLifecycleGateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pack: DetectionPackManifest
+    fixtures: list[NormalizedRegressionFixture] = Field(min_length=1, max_length=256)
+    rule_ids: list[str] = Field(default_factory=list, max_length=128)
+    dry_run: bool = True
+
+
+class DetectionLifecycleGateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gate_id: str
+    pack_id: str
+    pack_version: int
+    pack_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    tenant_id: str
+    actor: str
+    status: Literal["passed", "failed", "blocked"]
+    validation: list[DetectionRuleValidationResult] = Field(default_factory=list)
+    regression_report: NormalizedRegressionReport | None = None
+    coverage_report: DetectionCoverageReport | None = None
+    baseline: DetectionBaseline
+    observed_true_positive_rate: float = Field(default=0.0, ge=0, le=100)
+    observed_false_positive_rate: float = Field(default=0.0, ge=0, le=100)
+    observed_rule_coverage_percent: float = Field(default=0.0, ge=0, le=100)
+    observed_path_coverage_percent: float = Field(default=0.0, ge=0, le=100)
+    errors: list[str] = Field(default_factory=list, max_length=64)
+    warnings: list[str] = Field(default_factory=list, max_length=64)
+    dry_run: bool
 
 
 class ScenarioSpec(BaseModel):
