@@ -33,7 +33,15 @@ from app.kernel.contracts import (
     PluginCatalogPage,
 )
 from app.kernel.service import IntegrationKernel
-from app.models.telemetry import TelemetryIngestionResponse, TelemetryListResponse, TelemetryQuery
+from app.models.telemetry import (
+    TelemetryDetectionRequest,
+    TelemetryDetectionResponse,
+    TelemetryEvidenceProjection,
+    TelemetryHealthResponse,
+    TelemetryIngestionResponse,
+    TelemetryListResponse,
+    TelemetryQuery,
+)
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
@@ -145,6 +153,12 @@ from app.services.report import generate_pdf_report
 from app.services.scenario_runner import execute_scenario, list_run_summaries
 from app.services.scenarios import list_scenarios
 from app.services.siem_ingestion import SiemIngestionService, list_telemetry
+from app.services.telemetry_correlation import (
+    evaluate_telemetry,
+    health_diagnostics,
+    load_telemetry,
+    project_case_evidence,
+)
 from app.services.wazuh import WazuhIndexerClient
 
 
@@ -367,17 +381,94 @@ def build_router(
             raise HTTPException(status_code=422, detail="telemetry query bounds must be timezone-aware")
         if start >= end:
             raise HTTPException(status_code=422, detail="telemetry query start must be before end")
-        result = list_telemetry(
-            session_factory,
-            tenant_id=principal.tenant_id,
-            start=start.astimezone(timezone.utc),
-            end=end.astimezone(timezone.utc),
-            limit=limit,
-        )
+        try:
+            result = list_telemetry(
+                session_factory,
+                tenant_id=principal.tenant_id,
+                start=start.astimezone(timezone.utc),
+                end=end.astimezone(timezone.utc),
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         audit.record(
             "siem.telemetry_listed",
             {"tenant_id": principal.tenant_id, "event_count": len(result.events)},
             actor=principal.username,
+        )
+        return result
+
+    @protected_router.post(
+        "/siem/telemetry/detections/evaluate",
+        response_model=TelemetryDetectionResponse,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def siem_telemetry_detection(request: TelemetryDetectionRequest) -> TelemetryDetectionResponse:
+        principal = get_principal()
+        try:
+            result = evaluate_telemetry(
+                session_factory,
+                tenant_id=principal.tenant_id,
+                request=request,
+                catalog=detection_catalog,
+            )
+        except (KeyError, ValueError) as exc:
+            status_code = 404 if isinstance(exc, KeyError) else 422
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        record_audit(
+            "siem.telemetry_detection_evaluated",
+            {
+                "tenant_id": principal.tenant_id,
+                "event_count": result.event_count,
+                "match_count": len(result.evaluation.get("matches", [])),
+            },
+        )
+        return result
+
+    @protected_router.get(
+        "/siem/telemetry/evidence",
+        response_model=list[TelemetryEvidenceProjection],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def siem_telemetry_evidence(
+        start: datetime = Query(...),  # noqa: B008
+        end: datetime = Query(...),  # noqa: B008
+        limit: int = Query(default=200, ge=1, le=1000),  # noqa: B008
+    ) -> list[TelemetryEvidenceProjection]:
+        principal = get_principal()
+        try:
+            events = load_telemetry(
+                session_factory,
+                tenant_id=principal.tenant_id,
+                start=start,
+                end=end,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        projections = project_case_evidence(events)
+        record_audit(
+            "siem.telemetry_evidence_projected",
+            {"tenant_id": principal.tenant_id, "event_count": len(projections)},
+        )
+        return projections
+
+    @protected_router.get(
+        "/siem/telemetry/health",
+        response_model=TelemetryHealthResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def siem_telemetry_health() -> TelemetryHealthResponse:
+        principal = get_principal()
+        result = health_diagnostics(session_factory, tenant_id=principal.tenant_id)
+        record_audit(
+            "siem.telemetry_health_read",
+            {
+                "tenant_id": principal.tenant_id,
+                "status": result.status,
+                "total_runs": result.total_runs,
+                "total_events": result.total_events,
+            },
         )
         return result
 

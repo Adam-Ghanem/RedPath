@@ -13,8 +13,10 @@ The MVP uses SQLite for portability and keeps the schema compatible with Postgre
 | `purple_runs` | `id`, `technique_ids`, `dry_run`, `coverage_percent` | Purple-team comparison metadata |
 | `detection_observations` | `purple_run_id`, `technique_id`, `detected`, `evidence_count`, `alert_ids` | Per-technique coverage and gaps |
 | `audit_events` | `id`, `operation`, `actor`, `details`, `digest`, `created_at` | Searchable database copy of the append-only audit chain |
+| `telemetry_ingestion_runs` | `id`, `tenant_id`, `start_at`, `end_at`, fetched/stored/deduplicated counters | Tenant-scoped local ingestion run metadata |
+| `telemetry_events` | `id`, `tenant_id`, `observed_at`, `technique_ids`, `safe_fields`, `correlation_fields`, `raw_sha256` | Redacted normalized Wazuh telemetry; no raw provider payload |
 
-The current API implementation writes the append-only JSONL audit stream directly and uses additive migrations for discovery job expiry, authenticated actor capture, asset provenance, observation hashes, and first/last-seen timestamps. Job retention is per tenant and removes only expired or over-capacity terminal job metadata; normalized assets and audit records are retained for evidence continuity. Fresh local SQLite environments also receive the new columns through SQLAlchemy metadata creation.
+The current API implementation writes the append-only JSONL audit stream directly and uses additive migrations for discovery job expiry, authenticated actor capture, asset provenance, observation hashes, first/last-seen timestamps, telemetry ingestion, and correlation records. Job retention is per tenant and removes only expired or over-capacity terminal job metadata; normalized assets and audit records are retained for evidence continuity. Fresh local SQLite environments receive compatible columns through SQLAlchemy metadata creation. For upgraded deployments, apply `backend/migrations/001_siem_telemetry.sql` followed by `backend/migrations/002_telemetry_correlation.sql` through the release process before relying on correlation fields.
 
 ## Risk fields
 

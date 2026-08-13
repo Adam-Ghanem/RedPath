@@ -339,6 +339,7 @@ class TelemetryEvent(Base):
     technique_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     summary: Mapped[str] = mapped_column(String(1000), default="")
     safe_fields: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    correlation_fields: Mapped[dict[str, str | int | bool]] = mapped_column(JSON, default=dict)
     raw_sha256: Mapped[str] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -391,22 +392,39 @@ def run_migrations(engine) -> None:
                 ),
                 {"created_at": utcnow().isoformat()},
             )
-        applied = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 2")).first()
-        if applied:
+        applied_v2 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 2")).first()
+        if not applied_v2:
+            inspector = inspect(connection)
+            for table_name in _TENANT_TABLES:
+                if table_name not in inspector.get_table_names():
+                    continue
+                columns = {column["name"] for column in inspector.get_columns(table_name)}
+                if "tenant_id" not in columns:
+                    connection.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN tenant_id VARCHAR(128)'))
+                connection.execute(
+                    text(f'UPDATE "{table_name}" SET tenant_id = :tenant_id WHERE tenant_id IS NULL'),  # nosec B608 - table_name is selected from the internal _TENANT_TABLES allowlist.
+                    {"tenant_id": "legacy"},
+                )
+            connection.execute(
+                text("INSERT INTO schema_migrations (version, applied_at) VALUES (2, :applied_at)"),
+                {"applied_at": utcnow().isoformat()},
+            )
+
+        applied_v3 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 3")).first()
+        if applied_v3:
             return
         inspector = inspect(connection)
-        for table_name in _TENANT_TABLES:
-            if table_name not in inspector.get_table_names():
-                continue
-            columns = {column["name"] for column in inspector.get_columns(table_name)}
-            if "tenant_id" not in columns:
-                connection.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN tenant_id VARCHAR(128)'))
-            connection.execute(
-                text(f'UPDATE "{table_name}" SET tenant_id = :tenant_id WHERE tenant_id IS NULL'),  # nosec B608 - table_name is selected from the internal _TENANT_TABLES allowlist.
-                {"tenant_id": "legacy"},
-            )
+        if "telemetry_events" in inspector.get_table_names():
+            columns = {column["name"] for column in inspector.get_columns("telemetry_events")}
+            if "correlation_fields" not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE telemetry_events ADD COLUMN correlation_fields JSON "
+                        "NOT NULL DEFAULT '{}'"
+                    )
+                )
         connection.execute(
-            text("INSERT INTO schema_migrations (version, applied_at) VALUES (2, :applied_at)"),
+            text("INSERT INTO schema_migrations (version, applied_at) VALUES (3, :applied_at)"),
             {"applied_at": utcnow().isoformat()},
         )
 

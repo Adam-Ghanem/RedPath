@@ -7,20 +7,32 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
-from sqlalchemy import select
-
 from app.db.models import TelemetryEvent as TelemetryEventRow
 from app.db.models import TelemetryIngestionRun, utcnow
 from app.models.telemetry import TelemetryEvent, TelemetryIngestionResponse, TelemetryListResponse, TelemetryQuery
+from app.services.telemetry_correlation import load_telemetry
 from app.services.wazuh import WazuhIndexerClient
 
 _TECHNIQUE_PATTERN = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
+_SECRET_VALUE_PATTERN = re.compile(
+    r"(?i)\b(?:authorization|password|passwd|secret|token|api[-_]?key)\b\s*[:=]\s*[^\s,;]+"
+)
+_BEARER_PATTERN = re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+")
 _SAFE_FIELD_MAP = {
     ("agent", "id"): "agent_id",
     ("agent", "name"): "agent_name",
     ("location",): "location",
     ("decoder", "name"): "decoder",
     ("manager", "name"): "manager",
+}
+_CORRELATION_FIELD_MAP = {
+    ("data", "event_id"): "event_id",
+    ("data", "srcuser"): "srcuser",
+    ("data", "dstuser"): "dstuser",
+    ("data", "host"): "host",
+    ("data", "preauth_required"): "preauth_required",
+    ("data", "enrollee_supplies_subject"): "enrollee_supplies_subject",
+    ("data", "client_auth_eku"): "client_auth_eku",
 }
 
 
@@ -38,6 +50,34 @@ def _bounded_text(value: Any, length: int = 1000) -> str | None:
         return None
     text = str(value).strip()
     return text[:length] if text else None
+
+
+def _redacted_text(value: Any, length: int = 1000) -> str | None:
+    text = _bounded_text(value, length)
+    if text is None:
+        return None
+    text = _BEARER_PATTERN.sub("[REDACTED]", text)
+    return _SECRET_VALUE_PATTERN.sub("[REDACTED]", text)
+
+
+def _safe_scalar(value: Any) -> str | int | bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        bounded = value.strip()[:256]
+        return bounded or None
+    return None
+
+
+def _correlation_fields(source: dict[str, Any]) -> dict[str, str | int | bool]:
+    fields: dict[str, str | int | bool] = {}
+    for path, key in _CORRELATION_FIELD_MAP.items():
+        value = _safe_scalar(_nested(source, path))
+        if value is not None:
+            fields[key] = value
+    return fields
 
 
 def _parse_timestamp(source: dict[str, Any]) -> datetime:
@@ -97,7 +137,7 @@ def normalize_wazuh_document(document: dict[str, Any], tenant_id: str) -> Teleme
     raw_event_id = document.get("_id") or source.get("id") or raw_sha256[:32]
     event_id = hashlib.sha256(f"{tenant_id}:wazuh:{raw_event_id}".encode("utf-8")).hexdigest()
     rule_id = _bounded_text(_nested(source, ("rule", "id")), 64)
-    description = _bounded_text(_nested(source, ("rule", "description")), 1000)
+    description = _redacted_text(_nested(source, ("rule", "description")), 1000)
     agent_id = _bounded_text(_nested(source, ("agent", "id")), 128)
     safe_fields: dict[str, str] = {}
     for path, key in _SAFE_FIELD_MAP.items():
@@ -116,6 +156,7 @@ def normalize_wazuh_document(document: dict[str, Any], tenant_id: str) -> Teleme
         technique_ids=_technique_ids(source, description),
         summary=description or "Wazuh alert",
         safe_fields=safe_fields,
+        correlation_fields=_correlation_fields(source),
         raw_sha256=raw_sha256,
     )
 
@@ -182,6 +223,7 @@ class SiemIngestionService:
                         technique_ids=event.technique_ids,
                         summary=event.summary,
                         safe_fields=event.safe_fields,
+                        correlation_fields=event.correlation_fields,
                         raw_sha256=event.raw_sha256,
                     )
                 )
@@ -213,32 +255,11 @@ def list_telemetry(
     end: datetime,
     limit: int,
 ) -> TelemetryListResponse:
-    with session_factory() as session:
-        rows = session.scalars(
-            select(TelemetryEventRow)
-            .where(
-                TelemetryEventRow.tenant_id == tenant_id,
-                TelemetryEventRow.observed_at >= start,
-                TelemetryEventRow.observed_at <= end,
-            )
-            .order_by(TelemetryEventRow.observed_at.desc())
-            .limit(limit)
-        ).all()
-    events = [
-        TelemetryEvent(
-            event_id=row.id,
-            tenant_id=row.tenant_id,
-            source="wazuh",
-            observed_at=row.observed_at,
-            severity=row.severity,
-            rule_id=row.rule_id,
-            rule_description=row.rule_description,
-            asset_id=row.asset_id,
-            technique_ids=row.technique_ids or [],
-            summary=row.summary,
-            safe_fields=row.safe_fields or {},
-            raw_sha256=row.raw_sha256,
-        )
-        for row in rows
-    ]
+    events = load_telemetry(
+        session_factory,
+        tenant_id=tenant_id,
+        start=start,
+        end=end,
+        limit=limit,
+    )
     return TelemetryListResponse(tenant_id=tenant_id, events=events)

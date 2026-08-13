@@ -7,8 +7,10 @@ import pytest
 from app.core.config import Settings
 from app.db.models import create_session_factory
 from app.main import create_app
-from app.models.telemetry import TelemetryQuery
+from app.models.telemetry import TelemetryDetectionRequest, TelemetryQuery
+from app.services.detection_framework import DetectionRuleCatalog
 from app.services.siem_ingestion import SiemIngestionService, list_telemetry, normalize_wazuh_document
+from app.services.telemetry_correlation import evaluate_telemetry, health_diagnostics, project_case_evidence
 from app.services.wazuh import WazuhIndexerClient
 from fastapi.testclient import TestClient
 
@@ -42,7 +44,12 @@ def _fixture_document() -> dict:
             "agent": {"id": "007", "name": "dc01"},
             "location": "eventchannel",
             "decoder": {"name": "windows_eventchannel"},
-            "data": {"command": "do not copy into the analyst projection", "password": "secret"},
+            "data": {
+                "event_id": "4769",
+                "srcuser": "analyst01",
+                "command": "do not copy into the analyst projection",
+                "password": "secret",
+            },
         },
     }
 
@@ -149,6 +156,40 @@ def test_protected_api_ingest_and_readback(tmp_path, monkeypatch) -> None:
         )
         assert readback.status_code == 200
         assert len(readback.json()["events"]) == 1
+        detection = client.post(
+            "/api/v1/siem/telemetry/detections/evaluate",
+            json={
+                "start": query["start"],
+                "end": query["end"],
+                "rule_ids": ["ad.kerberoasting.service-ticket"],
+                "limit": 10,
+            },
+            headers=headers,
+        )
+        assert detection.status_code == 200
+        assert detection.json()["event_count"] == 1
+        assert detection.json()["evaluation"]["matches"][0]["rule_id"] == "ad.kerberoasting.service-ticket"
+        evidence = client.get(
+            "/api/v1/siem/telemetry/evidence",
+            params={"start": query["start"], "end": query["end"], "limit": 10},
+            headers=headers,
+        )
+        assert evidence.status_code == 200
+        assert evidence.json()[0]["tenant_id"] == me.json()["tenant_id"]
+        assert "password" not in evidence.text
+        health = client.get("/api/v1/siem/telemetry/health", headers=headers)
+        assert health.status_code == 200
+        assert health.json()["status"] == "healthy"
+        too_wide = client.post(
+            "/api/v1/siem/telemetry/detections/evaluate",
+            json={
+                "start": "2026-08-11T00:00:00Z",
+                "end": query["end"],
+                "limit": 10,
+            },
+            headers=headers,
+        )
+        assert too_wide.status_code == 422
 
 
 def test_wazuh_client_builds_read_only_bounded_search(monkeypatch) -> None:
@@ -185,5 +226,69 @@ def test_wazuh_client_builds_read_only_bounded_search(monkeypatch) -> None:
     assert captured["url"] == "https://wazuh.example:9200/wazuh-alerts*/_search"
     assert captured["client_kwargs"]["timeout"] == 7
     assert captured["post_kwargs"]["auth"] == ("reader", "secret")
-    assert captured["post_kwargs"]["json"]["size"] == 1000
-    assert captured["post_kwargs"]["json"]["query"]["bool"]["must"][0]["range"]["timestamp"]["gte"].endswith("+00:00")
+    body = captured["post_kwargs"]["json"]
+    assert body["size"] == 1000
+    assert body["query"]["bool"]["must"][0]["range"]["timestamp"]["gte"].endswith("+00:00")
+    assert "query_string" not in str(body)
+    assert body["sort"][0]["timestamp"]["order"] == "asc"
+
+
+
+def test_normalized_event_has_correlation_allowlist_without_sensitive_fields() -> None:
+    document = _fixture_document()
+    document["_source"]["rule"]["description"] += " Authorization: Bearer secret-value"
+    event = normalize_wazuh_document(document, "lab")
+
+    assert event.correlation_fields == {"event_id": "4769", "srcuser": "analyst01"}
+    assert "secret-value" not in event.summary
+    assert "password" not in event.model_dump_json()
+    assert "command" not in event.model_dump_json()
+
+
+def test_telemetry_detection_case_projection_health_and_replay_dedup(tmp_path) -> None:
+    session_factory = create_session_factory(f"sqlite:///{tmp_path / 'phase2.db'}")
+    service = SiemIngestionService(FakeWazuhClient([_fixture_document()]), session_factory)
+    first = asyncio.run(service.ingest(_query()))
+    second = asyncio.run(service.ingest(_query()))
+    request = TelemetryDetectionRequest(
+        start=_query().start,
+        end=_query().end,
+        rule_ids=["ad.kerberoasting.service-ticket"],
+        limit=10,
+    )
+
+    evaluation = evaluate_telemetry(
+        session_factory,
+        tenant_id="lab",
+        request=request,
+        catalog=DetectionRuleCatalog(),
+    )
+    listed = list_telemetry(
+        session_factory,
+        tenant_id="lab",
+        start=request.start,
+        end=request.end,
+        limit=10,
+    )
+    projections = project_case_evidence(listed.events)
+    health = health_diagnostics(session_factory, tenant_id="lab")
+    other_tenant = evaluate_telemetry(
+        session_factory,
+        tenant_id="other",
+        request=request,
+        catalog=DetectionRuleCatalog(),
+    )
+
+    assert first.stored_count == 1
+    assert second.stored_count == 0
+    assert second.deduplicated_count == 1
+    assert evaluation.event_count == 1
+    assert evaluation.evaluation["matches"][0]["rule_id"] == "ad.kerberoasting.service-ticket"
+    assert len(projections) == 1
+    assert projections[0].event_id == listed.events[0].event_id
+    assert projections[0].raw_sha256 == listed.events[0].raw_sha256
+    assert health.status == "healthy"
+    assert health.total_runs == 2
+    assert health.total_events == 1
+    assert health.total_deduplicated == 1
+    assert other_tenant.event_count == 0
