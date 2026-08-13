@@ -755,6 +755,10 @@ class EvidenceResponse(EvidenceCreate):
     review_status: str
     reviewer: str | None = None
     reviewed_at: datetime | None = None
+    custody_status: Literal["unverified", "verified", "rejected"] = "unverified"
+    custody_verified_by: str | None = None
+    custody_verified_at: datetime | None = None
+    custody_verification_sha256: str | None = None
     created_at: datetime
 
 
@@ -763,12 +767,31 @@ class EvidenceReviewUpdate(BaseModel):
     notes: str = Field(default="", max_length=4000)
 
 
+class EvidenceCustodyVerifyRequest(BaseModel):
+    decision: Literal["verified", "rejected"]
+    manifest_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-fA-F0-9]{64}$")
+    note: str = Field(default="", max_length=2000)
+
+
+class EvidenceCustodyEventResponse(BaseModel):
+    event_id: str
+    tenant_id: str
+    case_id: str
+    evidence_id: str
+    decision: Literal["verified", "rejected"]
+    actor: str
+    manifest_sha256: str
+    note: str = ""
+    created_at: datetime
+
+
 class RemediationCreate(BaseModel):
     campaign_id: str | None = None
     finding_title: str = Field(min_length=3, max_length=255)
     technique_id: str | None = None
     recommendation: str = Field(min_length=10, max_length=4000)
     owner: str = Field(default="unassigned", min_length=2, max_length=128)
+    assigned_to: str | None = Field(default=None, min_length=2, max_length=128)
     priority: Literal["low", "medium", "high", "critical"] = "medium"
     due_date: str | None = None
 
@@ -777,12 +800,24 @@ class RemediationResponse(RemediationCreate):
     tenant_id: str
     remediation_id: str
     status: str
+    verification_status: Literal["unverified", "pending", "verified", "rejected"] = "unverified"
+    verified_by: str | None = None
+    verified_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class RemediationLifecycleUpdate(BaseModel):
     status: Literal["open", "in_progress", "blocked", "resolved", "closed"]
+    note: str = Field(default="", max_length=2000)
+
+
+class RemediationAssignmentUpdate(BaseModel):
+    assigned_to: str = Field(min_length=2, max_length=128)
+
+
+class RemediationVerificationUpdate(BaseModel):
+    decision: Literal["verified", "rejected"]
     note: str = Field(default="", max_length=2000)
 
 
@@ -800,8 +835,19 @@ class RiskAcceptanceResponse(RiskAcceptanceCreate):
     approver: str
     acceptance_id: str
     status: Literal["active", "expired", "revoked"]
+    approval_status: Literal["approved", "revoked", "expired"] = "approved"
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    revoked_by: str | None = None
+    revoked_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class RiskAcceptanceDecisionRequest(BaseModel):
+    decision: Literal["approve", "revoke"]
+    expires_on: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    note: str = Field(default="", max_length=2000)
 
 
 class CoverageScorecard(BaseModel):
@@ -860,9 +906,20 @@ class RemediationSlaItem(BaseModel):
     priority: str
     status: str
     owner: str
+    assigned_to: str | None = None
     due_date: str | None = None
     target_days: int = Field(ge=1)
     state: Literal["on_track", "due_soon", "overdue", "closed"]
+
+
+class RemediationSlaEscalation(BaseModel):
+    tenant_id: str
+    remediation_id: str
+    assigned_to: str | None = None
+    state: Literal["due_soon", "overdue"]
+    escalation_level: Literal["manager_review", "leadership_review"]
+    policy_version: Literal["1.0"] = "1.0"
+    recommended_action: str
 
 
 class CampaignTimelineEvent(BaseModel):
@@ -874,12 +931,17 @@ class CampaignTimelineEvent(BaseModel):
 
 
 class CampaignExport(BaseModel):
+    schema_version: Literal["case-export.v3"] = "case-export.v3"
     tenant_id: str
+    actor: str
     campaign: CampaignResponse
     timeline: list[CampaignTimelineEvent] = Field(default_factory=list)
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     remediations: list[RemediationResponse] = Field(default_factory=list)
+    custody_history: list[EvidenceCustodyEventResponse] = Field(default_factory=list)
     governance_history: list[GovernanceHistoryEvent] = Field(default_factory=list)
+    risk_acceptances: list[RiskAcceptanceResponse] = Field(default_factory=list)
+    sla_escalations: list[RemediationSlaEscalation] = Field(default_factory=list)
     trend: list[TrendPoint] = Field(default_factory=list)
     detection_tuning: list[DetectionTuningItem] = Field(default_factory=list)
     manifest_sha256: str

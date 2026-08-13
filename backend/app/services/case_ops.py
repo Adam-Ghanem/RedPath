@@ -32,12 +32,14 @@ def _assert_close_ready(session: object, case_id: str, tenant_id: str) -> None:
         raise GovernanceViolation("case cannot close without registered evidence")
     if any(item.review_status != "accepted" for item in evidence):
         raise GovernanceViolation("case cannot close until all evidence is accepted")
+    if any(item.custody_status != "verified" for item in evidence):
+        raise GovernanceViolation("case cannot close until all evidence custody is verified")
 
     remediations = session.query(RemediationItem).filter_by(campaign_id=case_id, tenant_id=tenant_id).all()
     active_acceptances = {
         item.remediation_id
         for item in session.query(RiskAcceptance)
-        .filter_by(campaign_id=case_id, tenant_id=tenant_id, status="active")
+        .filter_by(campaign_id=case_id, tenant_id=tenant_id, status="active", approval_status="approved")
         .filter(RiskAcceptance.expires_on >= date.today().isoformat())
         .all()
         if item.remediation_id
@@ -45,7 +47,8 @@ def _assert_close_ready(session: object, case_id: str, tenant_id: str) -> None:
     unresolved = [
         item
         for item in remediations
-        if item.status not in {"resolved", "closed"} and item.id not in active_acceptances
+        if item.id not in active_acceptances
+        and (item.status not in {"resolved", "closed"} or item.verification_status != "verified")
     ]
     if unresolved:
         raise GovernanceViolation("case cannot close with unresolved remediation lacking active risk acceptance")

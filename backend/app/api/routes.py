@@ -70,6 +70,8 @@ from app.schemas.contracts import (
     DiscoveryJobCreate,
     DiscoveryJobStatus,
     EvidenceCreate,
+    EvidenceCustodyEventResponse,
+    EvidenceCustodyVerifyRequest,
     EvidenceManifest,
     EvidenceResponse,
     EvidenceReviewUpdate,
@@ -87,11 +89,15 @@ from app.schemas.contracts import (
     ReconResult,
     RegressionReport,
     RegressionRunRequest,
+    RemediationAssignmentUpdate,
     RemediationCreate,
     RemediationLifecycleUpdate,
     RemediationResponse,
+    RemediationSlaEscalation,
     RemediationSlaItem,
+    RemediationVerificationUpdate,
     RiskAcceptanceCreate,
+    RiskAcceptanceDecisionRequest,
     RiskAcceptanceResponse,
     ScenarioRunRequest,
     ScenarioRunResponse,
@@ -115,7 +121,11 @@ from app.schemas.identity import (
 from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary, PcapEvidenceView
 from app.services.ad_detection import detect_ad_findings
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
-from app.services.case_governance import list_governance_history
+from app.services.case_governance import (
+    list_custody_history,
+    list_governance_history,
+    verify_evidence_custody,
+)
 from app.services.case_ops import list_cases, update_case_status
 from app.services.copilot_explanation import build_copilot_service
 from app.services.copilot_sources import CopilotSourceNotFound, register_attack_path_analysis, resolve_copilot_source
@@ -127,6 +137,7 @@ from app.services.discovery_jobs import (
     DiscoveryRateLimitExceeded,
 )
 from app.services.expert_ops import (
+    assign_remediation,
     campaign_export,
     campaign_timeline,
     create_campaign,
@@ -138,16 +149,20 @@ from app.services.expert_ops import (
     list_campaigns,
     list_evidence,
     list_remediations,
+    remediation_escalations,
     remediation_sla,
     risk_trend,
 )
 from app.services.governance import (
     coverage_scorecard,
     create_risk_acceptance,
+    decide_risk_acceptance,
     executive_kpis,
+    expire_risk_acceptance,
     list_risk_acceptances,
     review_evidence,
     update_remediation,
+    verify_remediation,
 )
 from app.services.graph_engine import analyze_attack_graph
 from app.services.identity import (
@@ -773,6 +788,24 @@ def build_router(
         return history
 
     @protected_router.get(
+        "/cases/{case_id}/custody-history",
+        response_model=list[EvidenceCustodyEventResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def case_custody_history(case_id: str) -> list[EvidenceCustodyEventResponse]:
+        try:
+            custody = list_custody_history(case_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not custody:
+            tenant_id = get_principal().tenant_id
+            with session_factory() as session:
+                known_case = session.query(Campaign).filter_by(id=case_id, tenant_id=tenant_id).first()
+            if known_case is None:
+                raise HTTPException(status_code=404, detail=f"Unknown case: {case_id}")
+        return custody
+
+    @protected_router.get(
         "/cases/{case_id}/evidence",
         response_model=list[EvidenceResponse],
         dependencies=[Depends(permission_dependency("read"))],
@@ -897,6 +930,25 @@ def build_router(
         return result
 
     @protected_router.post(
+        "/evidence/{evidence_id}/custody",
+        response_model=EvidenceCustodyEventResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def evidence_custody(evidence_id: str, request: EvidenceCustodyVerifyRequest) -> EvidenceCustodyEventResponse:
+        try:
+            result = verify_evidence_custody(evidence_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            "evidence.custody_verified",
+            {"evidence_id": evidence_id, "decision": result.decision, "manifest_sha256": result.manifest_sha256},
+        )
+        return result
+
+    @protected_router.post(
         "/pcap/analyses",
         response_model=PcapAnalysisResponse,
         status_code=201,
@@ -1016,6 +1068,44 @@ def build_router(
         )
         return result
 
+    @protected_router.patch(
+        "/remediations/{remediation_id}/assignment",
+        response_model=RemediationResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def remediation_assignment(
+        remediation_id: str, request: RemediationAssignmentUpdate
+    ) -> RemediationResponse:
+        try:
+            result = assign_remediation(remediation_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        record_audit(
+            "remediation.assigned",
+            {"remediation_id": remediation_id, "assigned_to": result.assigned_to},
+        )
+        return result
+
+    @protected_router.patch(
+        "/remediations/{remediation_id}/verification",
+        response_model=RemediationResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def remediation_verification(
+        remediation_id: str, request: RemediationVerificationUpdate
+    ) -> RemediationResponse:
+        try:
+            result = verify_remediation(remediation_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            "remediation.verified",
+            {"remediation_id": remediation_id, "status": result.verification_status},
+        )
+        return result
+
     @protected_router.get(
         "/risk-acceptances",
         response_model=list[RiskAcceptanceResponse],
@@ -1043,8 +1133,47 @@ def build_router(
         )
         return result
 
+    @protected_router.patch(
+        "/risk-acceptances/{acceptance_id}/decision",
+        response_model=RiskAcceptanceResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def risk_acceptance_decision(
+        acceptance_id: str, request: RiskAcceptanceDecisionRequest
+    ) -> RiskAcceptanceResponse:
+        try:
+            result = decide_risk_acceptance(acceptance_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            "risk.acceptance_decision",
+            {"acceptance_id": acceptance_id, "decision": request.decision, "status": result.status},
+        )
+        return result
+
+    @protected_router.post(
+        "/risk-acceptances/{acceptance_id}/expire",
+        response_model=RiskAcceptanceResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def risk_acceptance_expire(acceptance_id: str) -> RiskAcceptanceResponse:
+        try:
+            result = expire_risk_acceptance(acceptance_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            "risk.acceptance_expired",
+            {"acceptance_id": acceptance_id, "expires_on": result.expires_on},
+        )
+        return result
+
     @protected_router.get(
-        "/scorecards/coverage", response_model=CoverageScorecard, dependencies=[Depends(permission_dependency("read"))]
+        "/scorecards/coverage",
+        response_model=CoverageScorecard, dependencies=[Depends(permission_dependency("read"))]
     )
     def coverage_scorecard_route() -> CoverageScorecard:
         return coverage_scorecard(session_factory)
@@ -1064,7 +1193,16 @@ def build_router(
         return remediation_sla(session_factory)
 
     @protected_router.get(
-        "/trends/risk", response_model=list[TrendPoint], dependencies=[Depends(permission_dependency("read"))]
+        "/remediations/escalations",
+        response_model=list[RemediationSlaEscalation],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def remediation_escalations_route() -> list[RemediationSlaEscalation]:
+        return remediation_escalations(session_factory)
+
+    @protected_router.get(
+        "/trends/risk",
+        response_model=list[TrendPoint], dependencies=[Depends(permission_dependency("read"))]
     )
     def risk_trends() -> list[TrendPoint]:
         return risk_trend(session_factory)

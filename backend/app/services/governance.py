@@ -15,7 +15,9 @@ from app.schemas.contracts import (
     ExecutiveKpis,
     RemediationLifecycleUpdate,
     RemediationResponse,
+    RemediationVerificationUpdate,
     RiskAcceptanceCreate,
+    RiskAcceptanceDecisionRequest,
     RiskAcceptanceResponse,
 )
 from app.services.case_governance import evidence_manifest_sha256, record_governance_event
@@ -58,6 +60,10 @@ def _evidence_response(row: EvidenceItem) -> EvidenceResponse:
         evidence_id=row.id,
         manifest_sha256=row.manifest_sha256 or evidence_manifest_sha256(row),
         review_status=row.review_status,
+        custody_status=row.custody_status,
+        custody_verified_by=row.custody_verified_by,
+        custody_verified_at=row.custody_verified_at,
+        custody_verification_sha256=row.custody_verification_sha256,
         reviewer=row.reviewer,
         reviewed_at=row.reviewed_at,
         created_at=row.created_at,
@@ -120,6 +126,12 @@ def update_remediation(
             raise GovernanceViolation(f"remediation transition {row.status!r} -> {request.status!r} is not allowed")
         row.status = request.status
         row.updated_at = utcnow()
+        if request.status in {"open", "in_progress", "blocked"}:
+            row.verification_status = "unverified"
+            row.verified_by = None
+            row.verified_at = None
+        elif request.status in {"resolved", "closed"} and row.verification_status == "unverified":
+            row.verification_status = "pending"
         if request.note:
             row.recommendation = (
                 f"{row.recommendation}\nLifecycle note ({current_actor()}): {redact_text(request.note)}"
@@ -141,22 +153,104 @@ def update_remediation(
         technique_id=row.technique_id,
         recommendation=row.recommendation,
         owner=row.owner,
+        assigned_to=row.assigned_to,
         priority=row.priority,
         due_date=row.due_date,
         remediation_id=row.id,
         status=row.status,
+        verification_status=row.verification_status,
+        verified_by=row.verified_by,
+        verified_at=row.verified_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def verify_remediation(
+    remediation_id: str,
+    request: RemediationVerificationUpdate,
+    session_factory: SessionFactory,
+) -> RemediationResponse:
+    tenant_id = current_tenant_id()
+    with session_factory() as session:
+        row = (
+            tenant_query(session.query(RemediationItem), RemediationItem, tenant_id)
+            .filter(RemediationItem.id == remediation_id)
+            .first()
+        )
+        if row is None:
+            raise KeyError(f"Unknown remediation: {remediation_id}")
+        if row.status not in {"resolved", "closed"}:
+            raise GovernanceViolation("remediation must be resolved or closed before verification")
+        if request.decision == "rejected":
+            if row.status == "closed":
+                raise GovernanceViolation("closed remediation cannot be rejected; reopen through the approved workflow")
+            if row.campaign_id:
+                case = (
+                    tenant_query(session.query(Campaign), Campaign, tenant_id)
+                    .filter(Campaign.id == row.campaign_id)
+                    .first()
+                )
+                if case is not None and case.status == "closed":
+                    raise GovernanceViolation("closed case cannot accept a rejected remediation verification")
+        row.verification_status = request.decision
+        row.verified_by = current_actor()
+        row.verified_at = utcnow()
+        if request.decision == "rejected":
+            row.status = "in_progress"
+            row.updated_at = utcnow()
+        if request.note:
+            row.recommendation = (
+                f"{row.recommendation}\nVerification note ({current_actor()}): {redact_text(request.note)}"
+            )
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                f"remediation.verification_{request.decision}",
+                f"Remediation {row.finding_title} verification marked {request.decision}.",
+                {"remediation_id": row.id, "status": row.status},
+            )
+        session.commit()
+        session.refresh(row)
+    return RemediationResponse(
+        tenant_id=row.tenant_id,
+        campaign_id=row.campaign_id,
+        finding_title=row.finding_title,
+        technique_id=row.technique_id,
+        recommendation=row.recommendation,
+        owner=row.owner,
+        assigned_to=row.assigned_to,
+        priority=row.priority,
+        due_date=row.due_date,
+        remediation_id=row.id,
+        status=row.status,
+        verification_status=row.verification_status,
+        verified_by=row.verified_by,
+        verified_at=row.verified_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
 
 
 def _acceptance_status(row: RiskAcceptance) -> str:
-    if row.status == "revoked":
+    if row.status == "revoked" or row.approval_status == "revoked":
         return "revoked"
+    if row.status == "expired" or row.approval_status == "expired":
+        return "expired"
     try:
         return "expired" if date.fromisoformat(row.expires_on) < date.today() else "active"
     except ValueError:
         return "expired"
+
+
+def _acceptance_approval_status(row: RiskAcceptance) -> str:
+    current_status = _acceptance_status(row)
+    if current_status == "expired":
+        return "expired"
+    if current_status == "revoked":
+        return "revoked"
+    return "approved"
 
 
 def _acceptance_response(row: RiskAcceptance) -> RiskAcceptanceResponse:
@@ -171,6 +265,11 @@ def _acceptance_response(row: RiskAcceptance) -> RiskAcceptanceResponse:
         expires_on=row.expires_on,
         acceptance_id=row.id,
         status=_acceptance_status(row),
+        approval_status=_acceptance_approval_status(row),
+        approved_by=row.approved_by,
+        approved_at=row.approved_at,
+        revoked_by=row.revoked_by,
+        revoked_at=row.revoked_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -192,10 +291,13 @@ def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: Sessi
         remediation_id=request.remediation_id,
         technique_id=request.technique_id,
         finding_title=request.finding_title,
-        rationale=request.rationale,
+        rationale=redact_text(request.rationale),
         approver=current_actor(),
         expires_on=request.expires_on,
         status="active",
+        approval_status="approved",
+        approved_by=current_actor(),
+        approved_at=now,
         created_at=now,
         updated_at=now,
     )
@@ -222,6 +324,87 @@ def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: Sessi
                 "risk.acceptance_created",
                 f"Risk acceptance created through {row.expires_on}.",
                 {"acceptance_id": row.id, "remediation_id": row.remediation_id},
+            )
+        session.commit()
+        session.refresh(row)
+    return _acceptance_response(row)
+
+
+def decide_risk_acceptance(
+    acceptance_id: str,
+    request: RiskAcceptanceDecisionRequest,
+    session_factory: SessionFactory,
+) -> RiskAcceptanceResponse:
+    tenant_id = current_tenant_id()
+    with session_factory() as session:
+        row = (
+            tenant_query(session.query(RiskAcceptance), RiskAcceptance, tenant_id)
+            .filter(RiskAcceptance.id == acceptance_id)
+            .first()
+        )
+        if row is None:
+            raise KeyError(f"Unknown risk acceptance: {acceptance_id}")
+        if request.decision == "approve":
+            expires_on = request.expires_on or row.expires_on
+            try:
+                if date.fromisoformat(expires_on) <= date.today():
+                    raise GovernanceViolation("approval expiry must be in the future")
+            except ValueError as exc:
+                raise GovernanceViolation("approval expiry must be an ISO date") from exc
+            row.expires_on = expires_on
+            row.status = "active"
+            row.approval_status = "approved"
+            row.approved_by = current_actor()
+            row.approved_at = utcnow()
+            row.revoked_by = None
+            row.revoked_at = None
+            event_type = "risk.acceptance_approved"
+        else:
+            row.status = "revoked"
+            row.approval_status = "revoked"
+            row.revoked_by = current_actor()
+            row.revoked_at = utcnow()
+            event_type = "risk.acceptance_revoked"
+        if request.note:
+            row.rationale = f"{row.rationale}\nDecision note ({current_actor()}): {redact_text(request.note)}"
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                event_type,
+                f"Risk acceptance {row.id} {request.decision}d.",
+                {"acceptance_id": row.id, "expires_on": row.expires_on},
+            )
+        session.commit()
+        session.refresh(row)
+    return _acceptance_response(row)
+
+
+def expire_risk_acceptance(acceptance_id: str, session_factory: SessionFactory) -> RiskAcceptanceResponse:
+    tenant_id = current_tenant_id()
+    with session_factory() as session:
+        row = (
+            tenant_query(session.query(RiskAcceptance), RiskAcceptance, tenant_id)
+            .filter(RiskAcceptance.id == acceptance_id)
+            .first()
+        )
+        if row is None:
+            raise KeyError(f"Unknown risk acceptance: {acceptance_id}")
+        try:
+            if date.fromisoformat(row.expires_on) >= date.today():
+                raise GovernanceViolation("risk acceptance has not reached its expiry date")
+        except ValueError as exc:
+            raise GovernanceViolation("risk acceptance expiry is invalid") from exc
+        row.status = "expired"
+        row.approval_status = "expired"
+        row.updated_at = utcnow()
+        if row.campaign_id:
+            record_governance_event(
+                session,
+                row.campaign_id,
+                "risk.acceptance_expired",
+                f"Risk acceptance {row.id} expired.",
+                {"acceptance_id": row.id, "expires_on": row.expires_on},
             )
         session.commit()
         session.refresh(row)

@@ -20,6 +20,7 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET/POST | `/api/v1/campaigns` | Create and list bounded assessment campaigns | Local metadata only; audit logged |
 | GET/POST/PATCH | `/api/v1/cases` and `/api/v1/cases/{case_id}/status` | Case lifecycle alias over bounded campaigns | Server-derived tenant and actor; valid transition state machine |
 | GET | `/api/v1/cases/{case_id}/governance-history` | Return tenant-scoped case transition history | Append-only local records; actor and tenant are server-derived |
+| GET | `/api/v1/cases/{case_id}/custody-history` | Return evidence chain-of-custody history | Tenant-filtered; immutable manifest must match each decision |
 | GET | `/api/v1/cases/{case_id}/evidence` | List case evidence metadata | Tenant-filtered; cross-tenant IDs return 404 |
 | GET | `/api/v1/cases/{case_id}/remediations` | List case remediation records | Tenant-filtered; cross-tenant IDs return 404 |
 | GET | `/api/v1/cases/{case_id}/export` | Build a tenant-safe report-ready case package | Read-only; includes governance history and manifest digest |
@@ -36,10 +37,18 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | POST | `/api/v1/scenarios/{scenario_id}/run` | Execute a safe evidence-driven scenario | Dry-run default; persists local summary only |
 | GET/POST | `/api/v1/evidence` | Register and list provenance metadata for imported evidence | Stores hash and metadata, never credentials |
 | GET | `/api/v1/evidence/{evidence_id}/manifest` | Generate canonical evidence manifest | Pure local hashing; no file execution |
-| GET/POST | `/api/v1/remediations` | Create and list remediation ownership items | Local workflow state; audit logged |
+| POST | `/api/v1/evidence/{evidence_id}/custody` | Verify or reject evidence chain of custody | Requires the immutable manifest digest; mismatch fails safely with 409 |
+| GET/POST | `/api/v1/remediations` | Create and list remediation ownership items | Tenant-validated assignment; audit logged |
+| PATCH | `/api/v1/remediations/{remediation_id}/assignment` | Assign remediation to an active same-tenant user | Existing `manage_cases` permission; unknown assignee returns 404 |
+| PATCH | `/api/v1/remediations/{remediation_id}/verification` | Verify or reject a resolved remediation | Server-derived verifier; closed cases reject unsafe rework |
 | GET | `/api/v1/remediations/sla` | Classify remediation SLA posture | Deterministic policy; no silent due-date changes |
+| GET | `/api/v1/remediations/escalations` | Return deterministic SLA escalation recommendations | Read-only policy hook; no notifications or external mutation |
 | GET | `/api/v1/integrity/audit` | Verify the chained JSONL audit log | Read-only integrity verification |
 | GET | `/api/v1/trends/risk` | Aggregate persisted risk and coverage by period | Derived from stored run records |
+| GET | `/api/v1/risk-acceptances` | List tenant-scoped approval decisions | Approval and expiry status are server-derived |
+| POST | `/api/v1/risk-acceptances` | Create a future-dated risk acceptance | Existing `manage_cases` permission; rationale is redacted |
+| PATCH | `/api/v1/risk-acceptances/{acceptance_id}/decision` | Approve or revoke a risk acceptance | Server-derived actor; approval and revocation are historical |
+| POST | `/api/v1/risk-acceptances/{acceptance_id}/expire` | Mark a past-due acceptance expired | Fails safely until the persisted expiry date has passed |
 | GET | `/api/v1/detection-tuning` | Return gap-driven rule-tuning queue | Recommendations only; no Wazuh mutation |
 | GET | `/api/v1/detections/rules` | List versioned declarative detection rules | Authenticated, tenant-aware read; no rule execution |
 | POST | `/api/v1/detections/rules` | Register a process-scoped defensive rule | Analyze permission; approval required for production status |
@@ -112,7 +121,9 @@ The scenario response combines findings, coverage, detection gaps, recommendatio
 
 A campaign is a bounded assessment context with an owner and scope snapshot. The case endpoints are a compatibility-preserving alias over this resource and always derive `tenant_id` and actor fields from the authenticated principal. Evidence registration requires a source, evidence type, title, SHA-256 digest, and optional run/technique links; the immutable evidence manifest excludes mutable review status and notes. Evidence review follows the valid `unreviewed`/`in_review`/`accepted`/`rejected` state machine and records the server-derived reviewer in both the response and governance history. Remediation records add ownership, priority, due date, and lifecycle status; lifecycle transitions are validated and history actor fields are server-derived.
 
-A case can move from `active` to `on_hold` or `closed`, and from `on_hold` to `active` or `closed`; closed cases cannot reopen. Closure requires at least one registered evidence item, all case evidence to be accepted, and every remediation to be resolved/closed or covered by a future-dated active risk acceptance. The tenant-safe export includes the server-derived tenant, campaign data, evidence, remediation, governance history, trends, detection tuning, and a deterministic manifest digest. These operations are metadata and evidence workflows only; RedPath does not modify AD, Wazuh, or external lab systems.
+A case can move from `active` to `on_hold` or `closed`, and from `on_hold` to `active` or `closed`; closed cases cannot reopen. Closure requires at least one registered evidence item, accepted review and verified custody for every case evidence item, and every remediation to be resolved/closed and independently verified or covered by a future-dated approved risk acceptance. Assignment accepts only active users in the current tenant and records the server-derived assigning actor. Remediation lifecycle changes move verification back to `unverified` or `pending` as appropriate; only resolved or closed remediations can be verified. The deterministic SLA policy exposes due-soon and overdue escalation recommendations but performs no notifications or remote changes.
+
+Risk acceptances are created with server-derived approval attribution, may be revoked or re-approved through the decision endpoint, and may be explicitly expired only after their persisted expiry date. The tenant-safe `case-export.v3` contract includes server-derived tenant and actor fields, evidence custody history, governance history, risk-acceptance status, remediation SLA escalation recommendations, trends, detection tuning, and a deterministic manifest digest. It is metadata-only and excludes raw telemetry, credentials, uploaded files, and external-system mutation controls.
 
 ## Offline PCAP forensics
 

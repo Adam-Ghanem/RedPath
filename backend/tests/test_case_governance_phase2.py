@@ -115,6 +115,13 @@ def test_phase2_actor_tenant_history_and_accepted_evidence_closure() -> None:
     assert reviewed.json()["reviewer"] == "phase2-admin"
     assert "[REDACTED]" in reviewed.json()["notes"]
     assert reviewed.json()["manifest_sha256"] == evidence["manifest_sha256"]
+    custody = raw_client.post(
+        f"/api/v1/evidence/{evidence['evidence_id']}/custody",
+        headers=ALPHA_HEADERS,
+        json={"decision": "verified", "manifest_sha256": evidence["manifest_sha256"]},
+    )
+    assert custody.status_code == 201
+    assert custody.json()["actor"] == "phase2-admin"
 
     remediaton = create_remediation(ALPHA_HEADERS, case["campaign_id"])
     unresolved = raw_client.patch(
@@ -137,6 +144,13 @@ def test_phase2_actor_tenant_history_and_accepted_evidence_closure() -> None:
         json={"status": "resolved", "note": "Validation complete."},
     )
     assert resolved.status_code == 200
+    verified = raw_client.patch(
+        f"/api/v1/remediations/{remediaton['remediation_id']}/verification",
+        headers=ALPHA_HEADERS,
+        json={"decision": "verified", "note": "Independent validation complete."},
+    )
+    assert verified.status_code == 200
+    assert verified.json()["verification_status"] == "verified"
 
     closed = raw_client.patch(
         f"/api/v1/cases/{case['campaign_id']}/status",
