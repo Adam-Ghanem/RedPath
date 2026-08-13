@@ -125,6 +125,92 @@ class WazuhAlert(BaseModel):
     timestamp: str | None = None
 
 
+class DetectionCondition(BaseModel):
+    path: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    operator: Literal["equals", "contains", "starts_with", "in"]
+    value: Any
+
+
+class DetectionRule(BaseModel):
+    rule_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    title: str = Field(min_length=3, max_length=255)
+    description: str = Field(min_length=10, max_length=2000)
+    technique_ids: list[str] = Field(min_length=1, max_length=8)
+    severity: Literal["info", "low", "medium", "high", "critical"]
+    event_sources: list[str] = Field(min_length=1, max_length=8)
+    conditions: list[DetectionCondition] = Field(min_length=1, max_length=10)
+    match_mode: Literal["all", "any"] = "all"
+    window_seconds: int = Field(default=300, ge=1, le=86400)
+    group_by: list[str] = Field(default_factory=list, max_length=3)
+    enabled: bool = True
+    false_positive_sla_percent: float = Field(default=5.0, ge=0, le=100)
+    deployment_status: Literal["draft", "testing", "production"] = "testing"
+    requires_approval: bool = True
+
+
+class DetectionRuleCreate(DetectionRule):
+    pass
+
+
+class DetectionMatch(BaseModel):
+    rule_id: str
+    technique_ids: list[str]
+    alert_ids: list[str]
+    matched_condition_count: int = Field(ge=1)
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    group_key: str = "all-events"
+    rationale: str
+
+
+class DetectionEvaluationRequest(BaseModel):
+    events: list[WazuhAlert] = Field(min_length=1, max_length=10000)
+    rule_ids: list[str] = Field(default_factory=list, max_length=128)
+
+
+class DetectionEvaluationResponse(BaseModel):
+    evaluated_at: datetime
+    event_count: int = Field(ge=0)
+    rule_count: int = Field(ge=0)
+    matches: list[DetectionMatch] = Field(default_factory=list)
+
+
+class RegressionFixture(BaseModel):
+    fixture_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    title: str = Field(min_length=3, max_length=255)
+    rule_id: str
+    expected_match: bool
+    events: list[WazuhAlert] = Field(min_length=1, max_length=10000)
+    description: str = Field(default="", max_length=2000)
+
+
+class RegressionRunRequest(BaseModel):
+    fixtures: list[RegressionFixture] | None = Field(default=None, max_length=256)
+    rule_ids: list[str] = Field(default_factory=list, max_length=128)
+
+
+class RegressionCaseResult(BaseModel):
+    fixture_id: str
+    rule_id: str
+    expected_match: bool
+    actual_match: bool
+    passed: bool
+    alert_ids: list[str] = Field(default_factory=list)
+    notes: str
+
+
+class RegressionReport(BaseModel):
+    run_id: str
+    status: Literal["passed", "failed"]
+    total_cases: int = Field(ge=0)
+    passed_cases: int = Field(ge=0)
+    failed_cases: int = Field(ge=0)
+    true_positive_rate: float = Field(ge=0, le=100)
+    false_positive_rate: float = Field(ge=0, le=100)
+    cases: list[RegressionCaseResult] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class ScenarioSpec(BaseModel):
     scenario_id: str
     name: str

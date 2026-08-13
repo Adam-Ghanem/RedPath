@@ -20,7 +20,11 @@ from app.schemas.contracts import (
     CorrelatedRisk,
     CorrelationRequest,
     CoverageScorecard,
+    DetectionEvaluationRequest,
+    DetectionEvaluationResponse,
     DetectionGapReport,
+    DetectionRule,
+    DetectionRuleCreate,
     DetectionTuningItem,
     EvidenceCreate,
     EvidenceManifest,
@@ -34,6 +38,8 @@ from app.schemas.contracts import (
     PurpleAnalysisRequest,
     ReconRequest,
     ReconResult,
+    RegressionReport,
+    RegressionRunRequest,
     RemediationCreate,
     RemediationLifecycleUpdate,
     RemediationResponse,
@@ -47,6 +53,7 @@ from app.schemas.contracts import (
 )
 from app.services.ad_detection import detect_ad_findings
 from app.services.correlation import correlate_findings
+from app.services.detection_framework import DetectionRuleCatalog
 from app.services.expert_ops import (
     campaign_export,
     campaign_timeline,
@@ -85,6 +92,7 @@ def build_router(settings: Settings) -> APIRouter:
     recon_service = ReconService(scope, timeout_seconds=settings.recon_timeout_seconds)
     audit = AuditLogger(settings.audit_log_path)
     session_factory = create_session_factory(settings.database_url)
+    detection_catalog = DetectionRuleCatalog()
 
     @router.get("/health")
     def health() -> dict[str, str | bool]:
@@ -276,6 +284,59 @@ def build_router(settings: Settings) -> APIRouter:
                 "profile": request.profile,
                 "requested_dry_run": request.dry_run,
                 "effective_dry_run": effective_dry_run,
+            },
+        )
+        return result
+
+    @router.get("/detections/rules", response_model=list[DetectionRule])
+    def detection_rules() -> list[DetectionRule]:
+        return detection_catalog.list_rules()
+
+    @router.post("/detections/rules", response_model=DetectionRule, status_code=201)
+    def detection_rule_create(request: DetectionRuleCreate) -> DetectionRule:
+        try:
+            result = detection_catalog.add_rule(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        audit.record(
+            "detection.rule_registered",
+            {
+                "rule_id": result.rule_id,
+                "deployment_status": result.deployment_status,
+                "requires_approval": result.requires_approval,
+            },
+        )
+        return result
+
+    @router.post("/detections/evaluate", response_model=DetectionEvaluationResponse)
+    def detection_evaluate(request: DetectionEvaluationRequest) -> DetectionEvaluationResponse:
+        try:
+            result = detection_catalog.evaluate(request.events, request.rule_ids)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "detection.rules_evaluated",
+            {
+                "event_count": result.event_count,
+                "rule_count": result.rule_count,
+                "match_count": len(result.matches),
+            },
+        )
+        return result
+
+    @router.post("/detections/regressions/run", response_model=RegressionReport)
+    def detection_regressions(request: RegressionRunRequest) -> RegressionReport:
+        try:
+            result = detection_catalog.run_regressions(request.fixtures, request.rule_ids)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        audit.record(
+            "detection.regression_completed",
+            {
+                "run_id": result.run_id,
+                "status": result.status,
+                "total_cases": result.total_cases,
+                "false_positive_rate": result.false_positive_rate,
             },
         )
         return result
