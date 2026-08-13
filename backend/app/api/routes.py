@@ -536,15 +536,12 @@ def build_router(
     )
     def integration_negotiate(plugin_id: str, request: CapabilityNegotiationRequest) -> CapabilityNegotiation:
         principal = get_principal()
-        context = IntegrationContext(
+        return integration_kernel.negotiate_request(
+            plugin_id,
+            request.model_copy(update={"request_id": request.request_id or str(uuid4())}),
             tenant_id=principal.tenant_id,
             actor=principal.username,
-            request_id=request.request_id or str(uuid4()),
-            contract_version=request.contract_version,
-            requested_capabilities=request.requested_capabilities,
-            dry_run=settings.dry_run or request.dry_run,
         )
-        return integration_kernel.negotiate(plugin_id, context)
 
     @protected_router.post(
         "/integrations/{plugin_id}/plan", dependencies=[Depends(permission_dependency("analyze"))]

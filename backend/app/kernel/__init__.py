@@ -1,7 +1,11 @@
 from app.kernel.contracts import (
+    CONTRACT_COMPATIBILITY_POLICY,
+    ApiResponseEnvelope,
     CapabilityDescriptor,
     CapabilityNegotiation,
     CapabilityNegotiationRequest,
+    ContractCompatibilityPolicy,
+    EventEnvelope,
     IntegrationAnalysis,
     IntegrationAnalysisRequest,
     IntegrationContext,
@@ -20,11 +24,15 @@ from app.kernel.contracts import (
 from app.kernel.service import IntegrationKernel
 
 __all__ = [
+    "ApiResponseEnvelope",
     "CapabilityDescriptor",
+    "CONTRACT_COMPATIBILITY_POLICY",
+    "ContractCompatibilityPolicy",
     "CapabilityNegotiation",
     "CapabilityNegotiationRequest",
     "IntegrationAnalysis",
     "IntegrationAnalysisRequest",
+    "EventEnvelope",
     "IntegrationContext",
     "IntegrationContextRequest",
     "IntegrationError",

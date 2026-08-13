@@ -4,12 +4,13 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.contracts import FindingInput
 
 SCHEMA_VERSION = "1.0"
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (SCHEMA_VERSION,)
+T = TypeVar("T")
 
 
 class ModuleKind(StrEnum):
@@ -38,6 +39,23 @@ class IntegrationErrorCode(StrEnum):
     INTERNAL_ERROR = "internal_error"
 
 
+class ContractCompatibilityPolicy(BaseModel):
+    """Explicit policy for versioned API and event compatibility."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    current_version: Literal["1.0"] = SCHEMA_VERSION
+    accepted_versions: tuple[str, ...] = (SCHEMA_VERSION,)
+    unknown_version_behavior: Literal["reject"] = "reject"
+    additive_changes_only: Literal[True] = True
+
+    def accepts(self, version: str) -> bool:
+        return version in self.accepted_versions
+
+
+CONTRACT_COMPATIBILITY_POLICY = ContractCompatibilityPolicy()
+
+
 class IntegrationError(BaseModel):
     """Structured extension error without stack traces or raw source payloads."""
 
@@ -50,6 +68,41 @@ class IntegrationError(BaseModel):
     plugin_id: str | None = Field(default=None, min_length=3, max_length=64)
     details: dict[str, str] = Field(default_factory=dict, max_length=16)
     retryable: bool = False
+
+
+class EventEnvelope(BaseModel):
+    """Versioned, tenant-scoped event metadata with scalar-only safe payloads."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    contract_version: str = Field(default=SCHEMA_VERSION, pattern=r"^\d+\.\d+$")
+    event_id: str = Field(min_length=1, max_length=128)
+    event_type: str = Field(min_length=3, max_length=128, pattern=r"^[a-z][a-z0-9_.-]+$")
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    tenant_id: str = Field(min_length=1, max_length=128)
+    actor: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(min_length=1, max_length=128)
+    payload: dict[str, str | int | float | bool | None] = Field(default_factory=dict, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_contract_and_payload(self) -> "EventEnvelope":
+        if not CONTRACT_COMPATIBILITY_POLICY.accepts(self.contract_version):
+            raise ValueError("unknown event contract version")
+        forbidden = {"command", "password", "secret", "token", "credential", "raw", "payload"}
+        if any(key.lower() in forbidden for key in self.payload):
+            raise ValueError("event payload contains a forbidden sensitive field")
+        return self
+
+
+class ApiResponseEnvelope(BaseModel, Generic[T]):
+    """Versioned API response wrapper for new transport endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    request_id: str = Field(min_length=1, max_length=128)
+    data: T
 
 
 class IntegrationKernelError(ValueError):
@@ -71,6 +124,13 @@ class IntegrationContextRequest(BaseModel):
     requested_capabilities: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     targets: tuple[str, ...] = Field(default_factory=tuple, max_length=64)
     dry_run: bool = True
+
+    @field_validator("contract_version")
+    @classmethod
+    def validate_requested_contract_version(cls, value: str) -> str:
+        if not CONTRACT_COMPATIBILITY_POLICY.accepts(value):
+            raise ValueError("unknown integration contract version")
+        return value
 
 
 class IntegrationAnalysisRequest(IntegrationContextRequest):
@@ -137,9 +197,6 @@ class PaginationMetadata(BaseModel):
     has_more: bool = False
 
 
-T = TypeVar("T")
-
-
 class Page(BaseModel, Generic[T]):
     """Typed pagination envelope for API and worker list responses."""
 
@@ -183,6 +240,13 @@ class IntegrationContext(BaseModel):
     requested_capabilities: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     targets: tuple[str, ...] = Field(default_factory=tuple, max_length=64)
     dry_run: bool = True
+
+    @field_validator("contract_version")
+    @classmethod
+    def validate_contract_version(cls, value: str) -> str:
+        if not CONTRACT_COMPATIBILITY_POLICY.accepts(value):
+            raise ValueError("unknown integration contract version")
+        return value
 
     @field_validator("targets")
     @classmethod
@@ -248,11 +312,15 @@ class IntegrationAnalysis(BaseModel):
 
 
 __all__ = [
+    "ApiResponseEnvelope",
     "CapabilityDescriptor",
+    "CONTRACT_COMPATIBILITY_POLICY",
+    "ContractCompatibilityPolicy",
     "CapabilityNegotiation",
     "CapabilityNegotiationRequest",
     "IntegrationAnalysis",
     "IntegrationAnalysisRequest",
+    "EventEnvelope",
     "IntegrationContext",
     "IntegrationContextRequest",
     "IntegrationError",

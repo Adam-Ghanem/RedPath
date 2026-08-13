@@ -170,3 +170,14 @@ pytest -q backend/tests/test_kernel_extension.py backend/tests/test_kernel.py
 ```
 
 The full backend suite and frontend quality gates remain required before merge. Downstream module contributors should implement against the negotiation and page envelopes, keep adapter-specific schemas behind their module boundary, and add fixture tests before registering a new capability.
+
+
+## Version and event compatibility
+
+The public integration contract is versioned independently from implementation versions. The current accepted contract version is `1.0`; unknown versions are rejected for execution contexts and event envelopes. Capability negotiation may receive a future version so it can return a structured incompatibility decision without invoking a plugin. A plugin may advertise only versions accepted by the platform policy, and a plan or analysis request is dispatched only after both platform and plugin compatibility checks pass.
+
+`EventEnvelope` is the stable event boundary. It carries a schema marker, contract version, event identity, event type, occurrence time, tenant ID, server-derived actor, request ID, and a bounded scalar metadata payload. Raw packet data, raw telemetry, credentials, tokens, commands, stack traces, and arbitrary nested payloads do not cross this envelope. Consumers must treat unknown event versions as non-processable and retain the original event for review rather than guessing its meaning.
+
+`Page[T]` and `PaginationMetadata` provide bounded list responses with a maximum page size of 100 and a bounded forward cursor. Producers must keep ordering stable within a query and must not use client-provided cursors to bypass tenant or resource authorization. Consumers must handle `has_more` and `next_cursor` explicitly rather than assuming a complete result set.
+
+Contract-only changes do not require a database migration. When persistence is changed, follow the additive workflow in [migrations.md](migrations.md), run the migration checker twice against a temporary database, and provide an application-revert, snapshot-restore, or forward-compensating rollback decision. No destructive rollback SQL is part of the automated path.

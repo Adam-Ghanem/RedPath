@@ -102,17 +102,34 @@ class IntegrationKernel:
             requested_capabilities=context.requested_capabilities,
             dry_run=context.dry_run,
         )
+        return self.negotiate_request(
+            plugin_id,
+            request,
+            tenant_id=context.tenant_id,
+            actor=context.actor,
+        )
+
+    def negotiate_request(
+        self,
+        plugin_id: str,
+        request: CapabilityNegotiationRequest,
+        *,
+        tenant_id: str,
+        actor: str,
+    ) -> CapabilityNegotiation:
+        """Negotiate a request before internal execution-context validation."""
+
         decision = self.registry.negotiate(plugin_id, request)
         self._record(
             "integration.capability_negotiated",
             {
                 "plugin_id": plugin_id,
-                "request_id": context.request_id,
-                "tenant_id": context.tenant_id,
-                "actor": context.actor,
-                "contract_version": context.contract_version,
+                "request_id": request.request_id or "negotiation",
+                "tenant_id": tenant_id,
+                "actor": actor,
+                "contract_version": request.contract_version,
                 "compatible": decision.compatible,
-                "requested_capability_count": len(context.requested_capabilities),
+                "requested_capability_count": len(request.requested_capabilities),
             },
         )
         return decision
