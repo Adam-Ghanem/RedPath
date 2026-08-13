@@ -13,6 +13,8 @@ ROLE_NAMES = {
     "remediation_manager",
 }
 
+SERVICE_ACCOUNT_SCOPES = {"read", "analyze", "manage_cases", "view_audit"}
+
 
 class AuthBootstrapRequest(BaseModel):
     bootstrap_token: str = Field(min_length=16, max_length=256)
@@ -46,10 +48,58 @@ class AuthMeResponse(BaseModel):
     tenant_slug: str
     roles: list[str]
     session_version: int
+    auth_method: str = "opaque"
+    mfa_verified: bool = False
+    step_up_expires_at: datetime | None = None
 
 
 class AuthSessionRevokeResponse(BaseModel):
     revoked_sessions: int = Field(ge=0)
+
+
+class MfaStepUpRequest(BaseModel):
+    assurance_level: Literal["aal2", "aal3"] = "aal2"
+    ttl_minutes: int = Field(default=15, ge=5, le=60)
+
+
+class MfaStepUpResponse(BaseModel):
+    mfa_verified: bool
+    step_up_expires_at: datetime
+
+
+class ServiceAccountCreateRequest(BaseModel):
+    name: str = Field(min_length=3, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    description: str = Field(default="", max_length=255)
+    scopes: list[str] = Field(min_length=1, max_length=4)
+    expires_at: datetime | None = None
+
+    @field_validator("scopes")
+    @classmethod
+    def scopes_must_be_known(cls, scopes: list[str]) -> list[str]:
+        if len(set(scopes)) != len(scopes) or any(scope not in SERVICE_ACCOUNT_SCOPES for scope in scopes):
+            raise ValueError("scopes must be unique and drawn from the supported service-account scope set")
+        return scopes
+
+
+class ServiceAccountResponse(BaseModel):
+    service_account_id: str
+    tenant_id: str
+    name: str
+    description: str
+    scopes: list[str]
+    created_by: str
+    is_active: bool
+    expires_at: datetime | None
+    last_rotated_at: datetime | None
+    token_version: int
+    created_at: datetime
+
+
+class ServiceAccountTokenResponse(BaseModel):
+    service_account: ServiceAccountResponse
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_at: datetime
 
 
 class TenantCreateRequest(BaseModel):

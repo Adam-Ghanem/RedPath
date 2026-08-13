@@ -1,5 +1,7 @@
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +27,15 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     release: str = "dev"
     auth_bootstrap_token: str = ""
+    auth_provider: Literal["opaque", "oidc"] = "opaque"
+    oidc_issuer_url: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_url: str = ""
+    auth_mfa_required_permissions: str = ""
+    auth_session_ttl_minutes: int = 15
+    service_account_token_ttl_minutes: int = 60
+    service_account_max_ttl_days: int = 90
+    auth_token_rotation_overlap_seconds: int = 30
     rate_limit_requests_per_minute: int = 120
     ai_features_enabled: bool = False
     ai_provider: str = "openai_compatible"
@@ -47,6 +58,28 @@ class Settings(BaseSettings):
     siem_request_timeout_seconds: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_identity_settings(self) -> "Settings":
+        if self.auth_provider == "oidc" and not all(
+            (self.oidc_issuer_url, self.oidc_audience, self.oidc_jwks_url)
+        ):
+            raise ValueError("OIDC provider requires issuer, audience, and JWKS URL")
+        if self.auth_session_ttl_minutes < 5 or self.auth_session_ttl_minutes > 1440:
+            raise ValueError("auth session TTL must be between 5 and 1440 minutes")
+        if self.service_account_token_ttl_minutes < 5:
+            raise ValueError("service-account token TTL must be at least 5 minutes")
+        if self.service_account_max_ttl_days < 1 or self.service_account_max_ttl_days > 365:
+            raise ValueError("service-account maximum TTL must be between 1 and 365 days")
+        if self.auth_token_rotation_overlap_seconds < 0 or self.auth_token_rotation_overlap_seconds > 3600:
+            raise ValueError("token rotation overlap must be between 0 and 3600 seconds")
+        return self
+
+    @property
+    def auth_mfa_required_permission_list(self) -> frozenset[str]:
+        return frozenset(
+            item.strip() for item in self.auth_mfa_required_permissions.split(",") if item.strip()
+        )
 
     @property
     def allowed_cidr_list(self) -> list[str]:

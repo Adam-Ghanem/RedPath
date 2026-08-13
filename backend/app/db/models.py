@@ -71,6 +71,36 @@ class AuthSession(Base):
     session_version: Mapped[int] = mapped_column(Integer)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mfa_verified_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ServiceAccount(Base):
+    __tablename__ = "service_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    description: Mapped[str] = mapped_column(String(255), default="")
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ServiceAccountToken(Base):
+    __tablename__ = "service_account_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    service_account_id: Mapped[str] = mapped_column(ForeignKey("service_accounts.id"), index=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_version: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -397,6 +427,43 @@ def run_alembic_migrations(database_url: str, target: str = "head") -> None:
 def run_alembic_downgrade(database_url: str, target: str = "base") -> None:
     """Downgrade only through Alembic for lifecycle checks and controlled rollback."""
     command.downgrade(_alembic_config(database_url), target)
+
+        applied_v5 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 5")).first()
+        if not applied_v5:
+            connection.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS service_accounts ("
+                    "id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(128) NOT NULL, "
+                    "name VARCHAR(128) NOT NULL, description VARCHAR(255) NOT NULL DEFAULT '', "
+                    "scopes JSON NOT NULL, created_by VARCHAR(128) NOT NULL, is_active BOOLEAN NOT NULL DEFAULT 1, "
+                    "expires_at DATETIME NULL, last_rotated_at DATETIME NULL, "
+                    "token_version INTEGER NOT NULL DEFAULT 1, "
+                    "created_at DATETIME NOT NULL)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS service_account_tokens ("
+                    "id VARCHAR(36) PRIMARY KEY, service_account_id VARCHAR(36) NOT NULL, "
+                    "tenant_id VARCHAR(128) NOT NULL, token_hash VARCHAR(64) NOT NULL UNIQUE, "
+                    "token_version INTEGER NOT NULL, expires_at DATETIME NOT NULL, revoked_at DATETIME NULL, "
+                    "created_at DATETIME NOT NULL)"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO schema_migrations (version, applied_at) VALUES (5, :applied_at)"),
+                {"applied_at": utcnow().isoformat()},
+            )
+
+        applied_v6 = connection.execute(text("SELECT version FROM schema_migrations WHERE version = 6")).first()
+        if not applied_v6 and "auth_sessions" in inspector.get_table_names():
+            session_columns = {column["name"] for column in inspector.get_columns("auth_sessions")}
+            if "mfa_verified_until" not in session_columns:
+                connection.execute(text("ALTER TABLE auth_sessions ADD COLUMN mfa_verified_until DATETIME"))
+            connection.execute(
+                text("INSERT INTO schema_migrations (version, applied_at) VALUES (6, :applied_at)"),
+                {"applied_at": utcnow().isoformat()},
+            )
 
 
 def create_session_factory(database_url: str):

@@ -11,7 +11,9 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.core.audit import AuditLogger
 from app.core.auth import (
+    MfaStepUpPolicy,
     RateLimiter,
+    build_authentication_provider,
     permission_dependency,
     principal_dependency,
     rate_limit_dependency,
@@ -102,6 +104,9 @@ from app.schemas.identity import (
     AuthMeResponse,
     AuthSessionRevokeResponse,
     AuthTokenResponse,
+    ServiceAccountCreateRequest,
+    ServiceAccountResponse,
+    ServiceAccountTokenResponse,
     TenantCreateRequest,
     TenantResponse,
     UserCreateRequest,
@@ -164,6 +169,11 @@ from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
 from app.services.scenario_runner import execute_scenario, list_run_summaries
 from app.services.scenarios import list_scenarios
+from app.services.service_accounts import (
+    ServiceAccountError,
+    ServiceAccountNotFound,
+    ServiceAccountService,
+)
 from app.services.siem_ingestion import SiemIngestionService, list_telemetry
 from app.services.telemetry_correlation import (
     evaluate_telemetry,
@@ -179,6 +189,7 @@ def build_router(
     metrics: MetricsRegistry | None = None,
     *,
     audit: AuditLogger | None = None,
+    oidc_verifier=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
     metrics = metrics or MetricsRegistry()
@@ -191,10 +202,22 @@ def build_router(
     )
     session_factory = create_session_factory(settings.database_url)
     identity = IdentityService(session_factory, settings.auth_bootstrap_token)
+    service_accounts = ServiceAccountService(
+        session_factory,
+        max_ttl_days=settings.service_account_max_ttl_days,
+        token_ttl_minutes=settings.service_account_token_ttl_minutes,
+    )
     limiter = RateLimiter(settings.rate_limit_requests_per_minute)
     copilot_limiter = RateLimiter(settings.ai_copilot_requests_per_minute)
     copilot_service = build_copilot_service(settings)
-    authenticate = principal_dependency(identity, limiter)
+    provider = build_authentication_provider(
+        settings.auth_provider,
+        identity,
+        service_accounts=service_accounts,
+        oidc_verifier=oidc_verifier,
+    )
+    step_up_policy = MfaStepUpPolicy(settings.auth_mfa_required_permission_list)
+    authenticate = principal_dependency(identity, limiter, provider=provider)
     protected_router = APIRouter(prefix="", dependencies=[Depends(authenticate)])
 
     def record_audit(operation: str, details: dict, *, actor: str | None = None) -> str:
@@ -270,6 +293,9 @@ def build_router(
             tenant_slug=principal.tenant_slug,
             roles=list(principal.roles),
             session_version=principal.session_version,
+            auth_method=principal.auth_method,
+            mfa_verified=principal.mfa_verified,
+            step_up_expires_at=principal.step_up_expires_at,
         )
 
     @protected_router.post("/auth/logout", response_model=AuthSessionRevokeResponse)
@@ -287,6 +313,67 @@ def build_router(
         revoked = identity.revoke_all(principal)
         record_audit("auth.sessions_revoked", {"revoked_sessions": revoked})
         return AuthSessionRevokeResponse(revoked_sessions=revoked)
+
+    @protected_router.post(
+        "/auth/service-accounts",
+        response_model=ServiceAccountTokenResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def service_account_create(request: ServiceAccountCreateRequest) -> ServiceAccountTokenResponse:
+        principal = get_principal()
+        try:
+            result = service_accounts.create(principal, request)
+        except ServiceAccountError as exc:
+            raise HTTPException(status_code=409, detail="service-account request rejected") from exc
+        record_audit(
+            "auth.service_account_created",
+            {"service_account_id": result.service_account.service_account_id, "scopes": result.service_account.scopes},
+        )
+        return result
+
+    @protected_router.get(
+        "/auth/service-accounts",
+        response_model=list[ServiceAccountResponse],
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def service_account_list() -> list[ServiceAccountResponse]:
+        return service_accounts.list(get_principal())
+
+    @protected_router.post(
+        "/auth/service-accounts/{service_account_id}/rotate",
+        response_model=ServiceAccountTokenResponse,
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def service_account_rotate(service_account_id: str) -> ServiceAccountTokenResponse:
+        try:
+            result = service_accounts.rotate(get_principal(), service_account_id)
+        except ServiceAccountNotFound as exc:
+            raise HTTPException(status_code=404, detail="service account not found") from exc
+        record_audit(
+            "auth.service_account_rotated",
+            {
+                "service_account_id": result.service_account.service_account_id,
+                "token_version": result.service_account.token_version,
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/auth/service-accounts/{service_account_id}/revoke",
+        response_model=ServiceAccountResponse,
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def service_account_revoke(service_account_id: str) -> ServiceAccountResponse:
+        try:
+            result = service_accounts.revoke(get_principal(), service_account_id)
+        except ServiceAccountNotFound as exc:
+            raise HTTPException(status_code=404, detail="service account not found") from exc
+        record_audit(
+            "auth.service_account_revoked",
+            {"service_account_id": result.service_account_id, "token_version": result.token_version},
+        )
+        return result
 
     @protected_router.post(
         "/auth/tenants",

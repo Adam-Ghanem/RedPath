@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Callable
 from uuid import uuid4
 
@@ -160,6 +160,8 @@ class IdentityService:
             )
             if not memberships:
                 raise InvalidCredentials("user has no active tenant membership")
+            step_up_expires_at = auth_session.mfa_verified_until
+            mfa_verified = step_up_expires_at is not None and step_up_expires_at > now
             return Principal(
                 user_id=user.id,
                 username=user.username,
@@ -167,7 +169,32 @@ class IdentityService:
                 tenant_slug=tenant.slug,
                 roles=tuple(sorted(membership.role for membership in memberships)),
                 session_version=user.session_version,
+                mfa_verified=mfa_verified,
+                step_up_expires_at=step_up_expires_at if mfa_verified else None,
             )
+
+    def record_step_up(self, principal: Principal, ttl_minutes: int) -> datetime:
+        if ttl_minutes < 5 or ttl_minutes > 60:
+            raise InvalidCredentials("step-up TTL is outside the allowed window")
+        now = utcnow()
+        expires_at = now + timedelta(minutes=ttl_minutes)
+        with self.session_factory() as session:
+            user = (
+                session.query(User)
+                .filter_by(id=principal.user_id, tenant_id=principal.tenant_id, is_active=True)
+                .first()
+            )
+            if user is None:
+                raise InvalidCredentials("authenticated user is no longer active")
+            session.query(AuthSession).filter_by(
+                user_id=user.id,
+                tenant_id=principal.tenant_id,
+                revoked_at=None,
+            ).filter(AuthSession.expires_at > now).update(
+                {"mfa_verified_until": expires_at}, synchronize_session=False
+            )
+            session.commit()
+        return expires_at
 
     def revoke(self, raw_token: str) -> bool:
         with self.session_factory() as session:
@@ -196,6 +223,7 @@ class IdentityService:
             )
             for auth_session in sessions:
                 auth_session.revoked_at = now
+                auth_session.mfa_verified_until = None
             user.session_version += 1
             session.commit()
             return len(sessions)

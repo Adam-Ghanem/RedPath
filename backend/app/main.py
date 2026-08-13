@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -10,6 +12,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import audit_safe_error, safe_error_response
 from app.core.observability import MetricsRegistry, RequestObservabilityMiddleware, configure_logging
 from app.core.ownership import OwnershipDenied
+from app.core.request_context import Principal
 
 
 def _actor(request: Request) -> str:
@@ -18,7 +21,11 @@ def _actor(request: Request) -> str:
     return username if isinstance(username, str) else "anonymous"
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    oidc_verifier: Callable[[str], Principal] | None = None,
+) -> FastAPI:
     resolved = settings or get_settings()
     metrics = MetricsRegistry()
     audit = AuditLogger(resolved.audit_log_path)
@@ -30,7 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.state.audit_logger = audit
     application.add_middleware(RequestObservabilityMiddleware, metrics=metrics)
-    application.include_router(build_router(resolved, metrics, audit=audit))
+    application.include_router(build_router(resolved, metrics, audit=audit, oidc_verifier=oidc_verifier))
 
     @application.exception_handler(OwnershipDenied)
     async def ownership_denied_handler(request: Request, _: OwnershipDenied) -> JSONResponse:

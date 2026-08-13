@@ -1,6 +1,6 @@
 # RedPath API design
 
-The API is versioned under `/api/v1` and returns JSON models that are stable enough for the React console and future CLI clients. All write-like operations create an audit record. The API is intentionally read-mostly with respect to external systems: Wazuh querying is read-only, while report generation only writes a local artifact. Except for health, one-time bootstrap, and token issuance, endpoints require a bearer session and tenant-aware RBAC; see [Identity, tenancy, RBAC, and API protection](identity-rbac.md).
+The API is versioned under `/api/v1` and returns JSON models that are stable enough for the React console and future CLI clients. All write-like operations create an audit record. The API is intentionally read-mostly with respect to external systems: Wazuh querying is read-only, while report generation only writes a local artifact. Except for health, one-time bootstrap, and token issuance, endpoints require a bearer session and tenant-aware RBAC; see [Identity, tenancy, RBAC, and API protection](identity-rbac.md). Authentication can use the default opaque session provider or an injected OIDC verifier. Authorization and rate-limit failures use generic error envelopes with a request ID and stable error code; raw claims, credentials, and provider responses are never returned.
 
 | Method | Endpoint | Purpose | Safety behavior |
 | --- | --- | --- | --- |
@@ -10,6 +10,9 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/auth/me` | Inspect the authenticated principal and tenant | Requires bearer authentication |
 | POST | `/api/v1/auth/tenants` | Provision a tenant and initial local administrator | Platform-admin role required |
 | GET/POST | `/api/v1/auth/users` | List or create users in the current tenant | Tenant-admin or platform-admin role required |
+| GET/POST | `/api/v1/auth/service-accounts` | List or create tenant-scoped least-privilege service accounts | Manage-identity permission; optional MFA step-up; token returned only on create |
+| POST | `/api/v1/auth/service-accounts/{service_account_id}/rotate` | Revoke prior service-account tokens and issue one replacement | Manage-identity permission; old tokens fail closed |
+| POST | `/api/v1/auth/service-accounts/{service_account_id}/revoke` | Disable a service account and revoke its active tokens | Manage-identity permission; audit logged without token material |
 | GET | `/api/v1/scope` | Show allowed CIDRs and dry-run default | Does not expose credentials |
 | GET | `/api/v1/techniques` | Return supported MITRE mappings | Static registry read |
 | GET | `/api/v1/scenarios` | Return curated safe assessment playbooks | Static catalog read |

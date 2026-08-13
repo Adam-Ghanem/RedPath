@@ -72,3 +72,21 @@ The API tests cover public-versus-protected routing, one-time bootstrap, Argon2i
 [1]: https://owasp.org/www-project-api-security/ "OWASP API Security Project"
 
 [2]: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html "OWASP Authentication Cheat Sheet"
+
+## Enterprise identity integration
+
+The application exposes a replaceable `AuthenticationProvider` boundary. The default lab provider resolves opaque sessions from the RedPath database. Deployments that use an external identity provider inject an OIDC verifier through the application factory; the verifier is responsible for validating issuer, audience, signature, expiry, key rotation, and revocation or session policy before returning the server-owned `Principal` contract. RedPath does not intercept passwords, store OIDC client secrets, or accept unverified claims.
+
+The principal carries an `auth_method`, optional MFA assurance state, step-up expiry, and explicit permission scopes. Existing bearer and role behavior remains unchanged when the default opaque provider is used. A configurable `MfaStepUpPolicy` hook can require externally verified step-up assurance for selected permissions. The default configuration requires no step-up, while deployments may opt in for identity administration and audit access.
+
+## Service-account lifecycle
+
+Tenant administrators may create a service account with a bounded set of least-privilege scopes. The API returns a newly generated bearer token once; only its SHA-256 digest is stored. Service-account tokens are tenant-scoped, expire within the configured maximum lifetime, and are never written to audit events. Rotation revokes all prior active tokens, increments the service-account token version, and returns one replacement token. Revocation disables the account, increments its token version, and revokes all active tokens. Service-account principals cannot use human-only role assumptions and are limited to their declared permission scopes.
+
+## Migration and rollback
+
+Migration version 5 creates the additive `service_accounts` and `service_account_tokens` tables. Migration version 6 adds nullable `mfa_verified_until` to `auth_sessions`. Both migrations are idempotent and non-destructive; existing sessions and tenant records remain valid. Rollback is application-level first: deploy the previous application version while retaining the additive tables and nullable column, then revoke or archive service-account credentials through the new lifecycle endpoints. Dropping the new tables is intentionally not automatic and requires a separately reviewed maintenance migration after all service-account tokens are disabled and retention requirements are satisfied.
+
+## Privacy and safe failure
+
+Tenant IDs, roles, service-account scopes, and session state are evaluated server-side. Cross-tenant resource access remains concealed as not found. Authentication, authorization, step-up, and rate-limit failures return stable generic error envelopes with request IDs and do not disclose raw claims, bearer tokens, passwords, OTPs, provider responses, resource identifiers, or stack traces. Audit events record the authenticated actor, route template, operation, and bounded non-sensitive metadata while preserving the append-only digest chain.

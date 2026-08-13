@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -14,9 +15,16 @@ class Principal:
     tenant_slug: str
     roles: tuple[str, ...]
     session_version: int
+    auth_method: str = "opaque"
+    mfa_verified: bool = False
+    step_up_expires_at: datetime | None = None
+    permissions: tuple[str, ...] = ()
 
     def has_role(self, role: str) -> bool:
         return role in self.roles
+
+    def has_permission(self, permission: str) -> bool:
+        return permission in self.permissions
 
 
 _current_principal: ContextVar[Principal | None] = ContextVar("redpath_principal", default=None)
