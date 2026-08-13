@@ -110,7 +110,8 @@ def test_integration_analyze_enforces_scope_and_tenant_isolation() -> None:
         headers=AUTH_HEADERS,
     )
     assert tenant_mismatch.status_code == 422
-    assert "tenant_id" in tenant_mismatch.json()["detail"]
+    assert tenant_mismatch.json()["detail"] == "Request failed"
+    assert tenant_mismatch.json()["error_code"] == "http_422"
 
 
 def test_unknown_plugin_is_not_executable() -> None:

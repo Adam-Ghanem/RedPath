@@ -491,7 +491,6 @@ def register_pcap_analysis(
         if campaign_id:
             from app.db.models import Campaign
 
-            campaign = session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first()
             if session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first() is None:
                 raise KeyError(f"Unknown campaign: {campaign_id}")
         session.add(
