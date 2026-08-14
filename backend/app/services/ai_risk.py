@@ -7,7 +7,7 @@ import logging
 import re
 from threading import Lock
 from time import monotonic
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 
@@ -90,12 +90,17 @@ class AnthropicProvider:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def generate(self, prompt: str, context: dict[str, Any]) -> str:
+    def generate(
+        self,
+        prompt: str,
+        context: dict[str, Any],
+        model_tier: Literal["fast", "deep"] = "fast",
+    ) -> str:
         if not self.settings.anthropic_api_key:
             raise AIProviderError("Anthropic provider key is not configured")
         payload = {
-            "model": self.settings.anthropic_model,
-            "max_tokens": self.settings.anthropic_max_tokens,
+            "model": self.settings.model_for_tier(model_tier),
+            "max_tokens": self.settings.max_tokens_for_tier(model_tier),
             "system": prompt,
             "messages": [{"role": "user", "content": json.dumps(context, sort_keys=True)}],
         }
@@ -105,7 +110,7 @@ class AnthropicProvider:
             "content-type": "application/json",
         }
         try:
-            with httpx.Client(timeout=self.settings.anthropic_timeout_seconds) as client:
+            with httpx.Client(timeout=self.settings.timeout_for_tier(model_tier)) as client:
                 response = client.post(self.settings.anthropic_api_url, headers=headers, json=payload)
                 response.raise_for_status()
                 body = response.json()
@@ -243,9 +248,10 @@ class AIService:
     ) -> bool:
         if deterministic_tier in {"high", "critical"} or not ai_enhanced:
             return True
-        if provider_tier and abs(
-            _TIER_ORDER[provider_tier] - _TIER_ORDER[cls._tier_from_centrality(centrality_score)]
-        ) > 1:
+        if (
+            provider_tier
+            and abs(_TIER_ORDER[provider_tier] - _TIER_ORDER[cls._tier_from_centrality(centrality_score)]) > 1
+        ):
             return True
         return confidence_score is None or confidence_score < 0.6
 
@@ -260,6 +266,7 @@ class AIService:
         started: float,
         success: bool,
         result: RiskAssessment | CopilotExplainResponse,
+        model_tier: Literal["fast", "deep"],
         error_type: str | None = None,
     ) -> None:
         if self.audit is None:
@@ -278,14 +285,28 @@ class AIService:
                 "recommended_actions_count": len(getattr(result, "recommended_actions", [])),
                 "ai_enhanced": result.ai_enhanced,
                 "requires_human_review": result.requires_human_review,
+                "model_tier": model_tier,
             },
             latency_ms=(monotonic() - started) * 1000,
             success=success,
             error_type=error_type,
         )
 
-    def _call_provider(self, *, system: str, user: str) -> dict[str, Any]:
-        raw = self.provider.generate(system, {"user_prompt": user, "response_format": "json_object"})
+    def _call_provider(
+        self,
+        *,
+        system: str,
+        user: str,
+        model_tier: Literal["fast", "deep"],
+    ) -> dict[str, Any]:
+        if isinstance(self.provider, AnthropicProvider):
+            raw = self.provider.generate(
+                system,
+                {"user_prompt": user, "response_format": "json_object"},
+                model_tier=model_tier,
+            )
+        else:
+            raw = self.provider.generate(system, {"user_prompt": user, "response_format": "json_object"})
         text = raw.strip()
         if text.startswith("```"):
             text = text.strip("`")
@@ -353,6 +374,7 @@ class AIService:
                 started=started,
                 success=True,
                 result=result,
+                model_tier="fast",
             )
             return result
         system = (
@@ -366,7 +388,7 @@ class AIService:
             safe_context, sort_keys=True
         )
         try:
-            data = self._call_provider(system=system, user=user)
+            data = self._call_provider(system=system, user=user, model_tier="fast")
             provider_tier = data.get("tier") if data.get("tier") in _TIER_ORDER else None
             confidence = data.get("confidence_score")
             confidence = confidence if isinstance(confidence, (int, float)) and 0 <= confidence <= 1 else None
@@ -399,6 +421,7 @@ class AIService:
                 started=started,
                 success=True,
                 result=result,
+                model_tier="fast",
             )
             return result
         except Exception as exc:
@@ -414,6 +437,7 @@ class AIService:
                 started=started,
                 success=False,
                 result=result,
+                model_tier="fast",
                 error_type=type(exc).__name__,
             )
             return result
@@ -473,6 +497,7 @@ class AIService:
                 started=started,
                 success=True,
                 result=result,
+                model_tier="deep",
             )
             return result
         system = (
@@ -486,7 +511,7 @@ class AIService:
         )
         user = "Explain this RedPath context for an analyst:\n" + json.dumps(safe_context, sort_keys=True)
         try:
-            data = self._call_provider(system=system, user=user)
+            data = self._call_provider(system=system, user=user, model_tier="deep")
             explanation = str(data.get("explanation", "")).strip()
             if not explanation or len(explanation) > 3000:
                 raise ValueError("provider returned an invalid copilot explanation")
@@ -510,6 +535,7 @@ class AIService:
                 started=started,
                 success=True,
                 result=result,
+                model_tier="deep",
             )
             return result
         except Exception as exc:
@@ -535,6 +561,7 @@ class AIService:
                 started=started,
                 success=False,
                 result=result,
+                model_tier="deep",
                 error_type=type(exc).__name__,
             )
             return result

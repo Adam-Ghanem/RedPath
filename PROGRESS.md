@@ -69,3 +69,46 @@ The frontend build still emits the pre-existing warnings that `VITE_ANALYTICS_EN
 ## Commit and remaining work
 
 The plugin upgrade and this progress record are committed in the next commit on the current feature branch. Backlog items 2 through 6 remain explicitly open: the flaky-retention 10-run investigation, load/concurrency benchmarks, new Semgrep/gitleaks/Hypothesis security pass, additional null-provider edge cases, and README consolidation. They must be selected one at a time in a later session and validated with fresh evidence before being marked complete.
+
+
+## Model-tier upgrade — 2026-08-14
+
+This follow-up was implemented on branch `feat/ai-model-tiers`, based on the existing `feat/ai-enterprise-controls` work. A live model catalog was captured in [`.artifacts/live-llm-model-catalog.json`](.artifacts/live-llm-model-catalog.json). It listed `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-7`; it did **not** list `claude-sonnet-5`. The implementation therefore uses the verified `claude-sonnet-4-6` identifier for the deep tier rather than configuring an unavailable model name.
+
+`Settings` now supports explicit `anthropic_model_fast` and `anthropic_model_deep` fields, independent timeout and token budgets, and `ai_deep_requests_per_minute`. The legacy `anthropic_model` setting remains accepted as a backward-compatible alias and emits a deprecation warning when explicitly used without an explicit fast model. `AnthropicProvider.generate()` accepts `model_tier="fast"|"deep"`, risk scoring selects `fast`, and copilot selects `deep`. Copilot retains its existing limiter and additionally uses a stricter deep-tier limiter. The selected tier is included in the redacted AI audit response summary.
+
+The evaluation harness is now present at [`backend/tests/ai_eval/golden.py`](backend/tests/ai_eval/golden.py) and [`backend/tests/ai_eval/run_comparison.py`](backend/tests/ai_eval/run_comparison.py). The same 20 synthetic scenarios were run through the live OpenAI-compatible built-in proxy using `claude-haiku-4-5` and `claude-sonnet-4-6`. The exact result is preserved in [`.artifacts/ai-model-comparison.json`](.artifacts/ai-model-comparison.json), and the interpretation is documented in [`docs/AI_MODEL_COMPARISON.md`](docs/AI_MODEL_COMPARISON.md).
+
+| Measured gate | Haiku fast | Sonnet deep | Evidence |
+| --- | ---: | ---: | --- |
+| Tier agreement | `19/20 = 95%` | `20/20 = 100%` | `.artifacts/ai-model-comparison.json` |
+| Valid MITRE technique output | `20/20 = 100%` | `20/20 = 100%` | Same artifact |
+| Evidence-term grounding check | `20/20 = 100%` | `20/20 = 100%` | Same artifact |
+| Latency p50 | `2369.39 ms` | `3853.69 ms` | Same artifact |
+| Latency p95 | `5441.84 ms` | `4652.27 ms` | Same artifact |
+| Estimated evaluation cost | `$0.014430` | `$0.048990` | Same artifact |
+
+The evidence demonstrates a narrow measured quality gain in deterministic-tier agreement (+5 percentage points), while the technique-validity and bounded grounding checks were already at ceiling for both models. Deep was therefore restricted to copilot reasoning instead of being applied globally. The comparison used the built-in proxy rather than direct production Anthropic billing, so it is a quality/routing signal and not a production SLA or billing claim.
+
+Focused validation after the tier changes: `16 passed, 5 warnings` for `backend/tests/test_ai_features.py`; `compileall` passed; Ruff reported `All checks passed!`. The new tests cover risk fast-tier routing, copilot deep-tier routing, tier-specific Anthropic model/budget/timeout payloads, legacy alias warning, independent deep limiter behavior, and none-provider fallback independence.
+
+The previous uncommitted schema additions for the not-yet-finished narrative/gap/remediation feature work were preserved in this branch but were not implemented or claimed as part of this model-tier task. The remaining limitation is that the current evaluator’s grounding metric is bounded and synthetic; it should be strengthened with analyst-reviewed reference answers before making a broader model-selection decision.
+
+
+### Final validation for model-tier branch
+
+The final validation was rerun after the audit-tier regression test was added. Raw output is preserved in [`.artifacts/model-tier-validation.log`](.artifacts/model-tier-validation.log).
+
+| Gate | Fresh final result |
+| --- | --- |
+| Backend tests | `116 passed, 30 warnings in 31.37s`; exit code `0` |
+| Ruff | `All checks passed!`; exit code `0` |
+| Bandit | exit code `0`; existing comment-parser warnings only |
+| pip-audit | `No known vulnerabilities found`; exit code `0` |
+| `npm ci` | `found 0 vulnerabilities`; exit code `0` |
+| Frontend tests | exit code `0` |
+| Frontend build | Vite build completed; exit code `0` |
+| Documentation checks | `Documentation checks passed`; exit code `0` |
+| Overall script status | `VALIDATION_STATUS: 0` |
+
+The frontend build retained the pre-existing undefined analytics-variable and script-type warnings; no unrelated frontend changes were made.

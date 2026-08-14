@@ -1,0 +1,742 @@
+{
+  "deep": {
+    "completion_tokens": 2756,
+    "estimated_cost_usd": 0.04899,
+    "evidence_grounded_rate": 1.0,
+    "latency_ms": {
+      "mean": 3730.21,
+      "p50": 3853.69,
+      "p95": 4652.27,
+      "p99": 4652.27
+    },
+    "model": "claude-sonnet-4-6",
+    "pricing_input_usd_per_1m": 3.0,
+    "pricing_output_usd_per_1m": 15.0,
+    "prompt_tokens": 2550,
+    "results": [
+      {
+        "completion_tokens": 130,
+        "deterministic_tier": "critical",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 95/100 combined with a service identity having access to a tier-0 directory asset via a recoverable service ticket represents a critical threat. Tier-0 assets are the highest-value targets in an Active Directory environment (e.g., domain controllers, AD itself). A recoverable service ticket means the credential material can be extracted and cracked offline, potentially granting full control of the directory and all dependent systems.",
+        "explanation_length": 453,
+        "latency_ms": 3451.4,
+        "prompt_tokens": 131,
+        "returned_tier": "critical",
+        "scenario_id": "kerberoast-critical",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 261
+      },
+      {
+        "completion_tokens": 167,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 75/100 indicates a high-severity finding. The scenario identifies an account configured without Kerberos pre-authentication, which is directly exploitable via AS-REP Roasting (T1558.004). This misconfiguration allows an attacker to request an AS-REP ticket for the account without needing valid credentials, exposing encrypted material that can be cracked offline to recover the account password. The presence of this weakness in a modeled identity path suggests it could serve as a viable step in an attack chain targeting further privilege escalation or lateral movement.",
+        "explanation_length": 589,
+        "latency_ms": 4114.22,
+        "prompt_tokens": 126,
+        "returned_tier": "high",
+        "scenario_id": "asrep-high",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 293
+      },
+      {
+        "completion_tokens": 133,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 75/100 indicates a high-severity finding. The scenario describes a misconfigured or abused certificate template relationship that can enable unauthorized privileged authentication. This is a well-known Active Directory Certificate Services (AD CS) attack vector where template misconfigurations allow attackers to obtain certificates that grant elevated privileges, potentially leading to domain compromise. The combination of certificate template abuse and privileged authentication access represents a significant lateral movement and privilege escalation risk.",
+        "explanation_length": 579,
+        "latency_ms": 4487.71,
+        "prompt_tokens": 119,
+        "returned_tier": "high",
+        "scenario_id": "certificate-high",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 252
+      },
+      {
+        "completion_tokens": 161,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 75/100 combined with a confirmed lateral movement route via an administrative share to an application server represents a high-tier threat. Administrative shares (e.g., C$, ADMIN$) are a well-known vector for lateral movement, and a modeled route to an application server indicates an attacker could pivot to a high-value target. While no active exploitation is confirmed in the scenario, the structural path exists and the risk score is elevated, warranting urgent investigation and remediation such as restricting SMB access and auditing share permissions.",
+        "explanation_length": 574,
+        "latency_ms": 4652.27,
+        "prompt_tokens": 125,
+        "returned_tier": "high",
+        "scenario_id": "admin-share-high",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 286
+      },
+      {
+        "completion_tokens": 176,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 50/100 places this event at a medium tier. The scenario describes a service ticket exposure on a non-critical workstation, consistent with Kerberoasting activity (T1558.003), where service tickets can be captured and subjected to offline cracking to recover service account credentials. While the affected workstation is described as non-critical and downstream impact is limited, service ticket exposure still represents a meaningful credential-based attack vector that could enable lateral movement or privilege escalation if the extracted credentials belong to privileged service accounts. The limited blast radius and non-critical asset classification prevent elevation to high or critical tiers.",
+        "explanation_length": 716,
+        "latency_ms": 4840.38,
+        "prompt_tokens": 127,
+        "returned_tier": "medium",
+        "scenario_id": "ticket-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 303
+      },
+      {
+        "completion_tokens": 140,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A pre-authentication gap exists on a workstation-class asset, which maps to AS-REP Roasting (T1558.004) and enables offline credential attacks without requiring prior authentication. The risk score of 50/100 reflects a moderate threat: while the vulnerability is meaningful and could lead to credential compromise, the affected asset is explicitly noted as not a crown jewel, limiting the potential blast radius and overall business impact. Remediation should be prioritized but is not immediately critical.",
+        "explanation_length": 507,
+        "latency_ms": 4286.47,
+        "prompt_tokens": 131,
+        "returned_tier": "medium",
+        "scenario_id": "asrep-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 271
+      },
+      {
+        "completion_tokens": 115,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A delegated certificate template with moderate privilege impact presents a medium-level risk. The risk score of 50/100 reflects a non-trivial but not immediately critical threat. Misconfigured or abused certificate templates can enable privilege escalation or unauthorized authentication, but the moderate privilege impact in the modeled graph indicates the blast radius is constrained rather than domain-wide or critical.",
+        "explanation_length": 422,
+        "latency_ms": 3249.38,
+        "prompt_tokens": 125,
+        "returned_tier": "medium",
+        "scenario_id": "certificate-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 240
+      },
+      {
+        "completion_tokens": 146,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 50/100 indicates a moderate threat level. The use of an administrative share (SMB/Windows Admin Shares) to reach an application host is a recognized lateral movement technique. While access to the application host is concerning, the failure to reach a directory control asset limits the potential blast radius. The activity aligns with permitted technique T1021.002 but still warrants investigation to determine whether the administrative share access was authorized and to prevent further lateral movement attempts toward higher-value assets such as domain controllers.",
+        "explanation_length": 586,
+        "latency_ms": 3618.7,
+        "prompt_tokens": 124,
+        "returned_tier": "medium",
+        "scenario_id": "share-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 270
+      },
+      {
+        "completion_tokens": 88,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The risk score of 20/100 reflects a low threat level. The observation involves a single isolated service ticket event with low modeled likelihood and low modeled impact, indicating no corroborating signals or broader attack pattern to elevate concern.",
+        "explanation_length": 251,
+        "latency_ms": 2407.95,
+        "prompt_tokens": 124,
+        "returned_tier": "low",
+        "scenario_id": "ticket-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 212
+      },
+      {
+        "completion_tokens": 119,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The risk score of 20/100 reflects a minimal threat level. The pre-authentication gap identified is attached to a low-value isolated identity, significantly limiting the potential blast radius of any exploitation. The isolation of the affected identity constrains lateral movement opportunities and reduces the likelihood of meaningful credential abuse or privilege escalation. No indicators of active exploitation or high-value target involvement are present in the evidence.",
+        "explanation_length": 475,
+        "latency_ms": 2712.01,
+        "prompt_tokens": 128,
+        "returned_tier": "low",
+        "scenario_id": "asrep-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 247
+      },
+      {
+        "completion_tokens": 135,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The risk score of 20/100 reflects a minimal threat level. A certificate template is exposed within a sandbox environment, and critically, there is no identified path to sensitive assets. The sandbox isolation limits the potential impact of the exposed certificate template, as lateral movement or escalation to production or sensitive systems is not evidenced. While certificate template exposure can be a precursor to privilege escalation or credential abuse, the absence of any pathway to sensitive assets significantly reduces the realized risk in this scenario.",
+        "explanation_length": 565,
+        "latency_ms": 3923.51,
+        "prompt_tokens": 121,
+        "returned_tier": "low",
+        "scenario_id": "certificate-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 256
+      },
+      {
+        "completion_tokens": 103,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The risk score of 20/100 reflects minimal threat potential. The scenario describes an isolated admin share relationship with low path centrality, meaning it has limited connectivity within the network and does not serve as a significant pivot point for lateral movement. The isolation of this relationship substantially reduces the likelihood of successful exploitation or broader network compromise.",
+        "explanation_length": 400,
+        "latency_ms": 2806.0,
+        "prompt_tokens": 122,
+        "returned_tier": "low",
+        "scenario_id": "share-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 225
+      },
+      {
+        "completion_tokens": 131,
+        "deterministic_tier": "critical",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 95/100 combined with evidence of a service ticket request (consistent with Kerberoasting activity) followed by lateral movement via an admin share directly to a tier-0 asset (e.g., domain controller or privileged system) represents a critical threat. This attack chain suggests credential compromise and targeted privileged access, indicating an adversary is likely attempting or has achieved domain-level control.",
+        "explanation_length": 430,
+        "latency_ms": 4036.38,
+        "prompt_tokens": 135,
+        "returned_tier": "critical",
+        "scenario_id": "kerberoast-critical-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003",
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 266
+      },
+      {
+        "completion_tokens": 172,
+        "deterministic_tier": "critical",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 95/100 indicates a near-maximum severity event. The scenario describes abuse of a certificate template (T1649 - Steal or Forge Authentication Certificates) combined with a pre-authentication attack chain (T1558.004 - AS-REP Roasting), targeting the directory's crown jewel assets. This combination represents a highly privileged attack path that can result in full domain compromise, as forged certificates and pre-authentication weaknesses together allow an adversary to authenticate as high-privilege principals without valid credentials, bypassing standard authentication controls.",
+        "explanation_length": 600,
+        "latency_ms": 4269.65,
+        "prompt_tokens": 131,
+        "returned_tier": "critical",
+        "scenario_id": "certificate-critical-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1649",
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 303
+      },
+      {
+        "completion_tokens": 182,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 75/100 combined with a pre-authentication vulnerability providing direct lateral movement capability to a privileged application host represents a high-tier threat. Pre-authentication flaws are particularly severe because they require no valid credentials to exploit, lowering the barrier for attackers significantly. The ability to move laterally to a privileged host increases the potential blast radius, as compromise of such a host could expose sensitive data, credentials, or critical business functions. The combination of unauthenticated access and privileged target elevation justifies high classification without reaching critical, as no confirmed exploitation or full compromise is documented in the evidence.",
+        "explanation_length": 735,
+        "latency_ms": 4025.26,
+        "prompt_tokens": 132,
+        "returned_tier": "high",
+        "scenario_id": "asrep-high-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004",
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 314
+      },
+      {
+        "completion_tokens": 138,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 75/100 combined with exposure of a certificate enrollment control via an admin share represents a high-severity finding. Admin share access (T1021.002) provides lateral movement capability, and if leveraged to access or manipulate a certificate template (T1649), an attacker could steal or forge authentication certificates, enabling persistent and stealthy access. The combination of these two techniques creates a significant escalation path that could compromise identity infrastructure.",
+        "explanation_length": 506,
+        "latency_ms": 3783.87,
+        "prompt_tokens": 130,
+        "returned_tier": "high",
+        "scenario_id": "share-high-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002",
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 268
+      },
+      {
+        "completion_tokens": 136,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 50/100 indicates moderate severity. The scenario describes a service ticket interacting with a delegated certificate relationship, which aligns with Kerberoasting activity (T1558.003) involving service tickets and certificate-based credential abuse through delegation (T1649). The impact is explicitly stated as moderate, and no indicators of lateral movement, data exfiltration, or escalation to critical assets are present in the evidence.",
+        "explanation_length": 457,
+        "latency_ms": 3632.55,
+        "prompt_tokens": 128,
+        "returned_tier": "medium",
+        "scenario_id": "ticket-medium-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003",
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 264
+      },
+      {
+        "completion_tokens": 170,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A risk score of 50/100 reflects a moderate threat level. Two identity weaknesses are present and combine, which elevates concern beyond a single isolated finding. The scenario references pre-authentication and service ticket abuse, indicating Kerberos-related attack techniques are in play. However, the attack path terminates outside the critical asset zone, meaning no high-value systems are directly exposed or compromised at this stage. The combination of two weaknesses warrants monitoring and remediation but does not yet constitute a critical or high-severity incident given the containment boundary described.",
+        "explanation_length": 617,
+        "latency_ms": 4525.25,
+        "prompt_tokens": 133,
+        "returned_tier": "medium",
+        "scenario_id": "asrep-medium-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004",
+          "T1558.003"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 303
+      },
+      {
+        "completion_tokens": 114,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The risk score of 20/100 indicates a minimal threat level. The scenario describes a sandbox certificate relationship with no modeled path to sensitive assets, meaning there is no demonstrated route for lateral movement or privilege escalation to critical resources. While certificate template activity (T1649) is present, the isolation of the sandbox environment and absence of connectivity to sensitive assets significantly limits the potential impact.",
+        "explanation_length": 453,
+        "latency_ms": 3209.19,
+        "prompt_tokens": 127,
+        "returned_tier": "low",
+        "scenario_id": "certificate-low-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 241
+      },
+      {
+        "completion_tokens": 100,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The risk score of 20/100 indicates a low-severity finding. The scenario explicitly describes the share relationship as isolated with low likelihood of malicious activity and no evidence of privilege escalation. The admin share activity aligns with T1021.002 but lacks indicators of broader compromise or lateral movement.",
+        "explanation_length": 321,
+        "latency_ms": 2571.97,
+        "prompt_tokens": 131,
+        "returned_tier": "low",
+        "scenario_id": "share-low-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 231
+      }
+    ],
+    "scenario_count": 20,
+    "technique_valid_rate": 1.0,
+    "tier_agreement_rate": 1.0
+  },
+  "evaluation": {
+    "dataset": "backend/tests/ai_eval/golden.py",
+    "models": {
+      "deep": "claude-sonnet-4-6",
+      "fast": "claude-haiku-4-5"
+    },
+    "provider": "OpenAI-compatible built-in proxy",
+    "scenario_count": 20,
+    "system_prompt_version": "tier-comparison-v1"
+  },
+  "fast": {
+    "completion_tokens": 2380,
+    "estimated_cost_usd": 0.01443,
+    "evidence_grounded_rate": 1.0,
+    "latency_ms": {
+      "mean": 2890.74,
+      "p50": 2369.39,
+      "p95": 5441.84,
+      "p99": 5441.84
+    },
+    "model": "claude-haiku-4-5",
+    "pricing_input_usd_per_1m": 1.0,
+    "pricing_output_usd_per_1m": 5.0,
+    "prompt_tokens": 2530,
+    "results": [
+      {
+        "completion_tokens": 139,
+        "deterministic_tier": "critical",
+        "evidence_grounded": true,
+        "explanation": "A service identity with access to a tier-0 directory asset via service ticket represents a critical risk. Tier-0 assets are the highest classification for directory infrastructure (typically Domain Controllers or equivalent). If compromised, this service identity could be leveraged to obtain or abuse the service ticket for lateral movement, privilege escalation, or persistent access to the most sensitive infrastructure. The recoverable nature of the service ticket amplifies risk by enabling potential ticket replay or extraction attacks.",
+        "explanation_length": 542,
+        "latency_ms": 5181.82,
+        "prompt_tokens": 130,
+        "returned_tier": "critical",
+        "scenario_id": "kerberoast-critical",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 269
+      },
+      {
+        "completion_tokens": 120,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "An account without pre-authentication configured in the identity path creates a security vulnerability. Pre-authentication is a security mechanism that helps prevent unauthorized access by requiring verification before granting tickets. An account lacking this protection is exposed to potential compromise, particularly to credential-based attacks and unauthorized authentication attempts. The risk score of 75/100 reflects the serious nature of this misconfiguration.",
+        "explanation_length": 469,
+        "latency_ms": 1857.78,
+        "prompt_tokens": 125,
+        "returned_tier": "high",
+        "scenario_id": "asrep-high",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 245
+      },
+      {
+        "completion_tokens": 110,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "The scenario describes a certificate template vulnerability that can enable unauthorized privileged authentication. With a risk score of 75/100 and the specific mention of privilege escalation through certificate template manipulation, this represents a high-tier threat. Certificate template abuse is a known attack vector that can lead to unauthorized privilege acquisition and lateral movement in Active Directory environments.",
+        "explanation_length": 430,
+        "latency_ms": 1699.76,
+        "prompt_tokens": 118,
+        "returned_tier": "high",
+        "scenario_id": "certificate-high",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 228
+      },
+      {
+        "completion_tokens": 150,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "The scenario describes an administrative share that provides a lateral movement pathway to an application server. With a risk score of 75/100, this represents a significant security concern. Administrative shares (such as C$, ADMIN$, IPC$) are high-value attack vectors that, if compromised, could enable an attacker to move laterally through the network to critical application infrastructure. The presence of an unsecured or misconfigured administrative share creates a direct attack path that could lead to unauthorized access to sensitive systems.",
+        "explanation_length": 551,
+        "latency_ms": 2099.82,
+        "prompt_tokens": 124,
+        "returned_tier": "high",
+        "scenario_id": "admin-share-high",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 274
+      },
+      {
+        "completion_tokens": 121,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A service ticket exposure on a non-critical workstation with limited downstream impact presents minimal risk. The exposure is contained to a workstation with restricted capability to propagate or cause significant harm. Service ticket compromise (T1558.003) could enable Kerberos ticket theft, but the non-critical nature of the affected system and stated limited downstream impact constrains the threat scope.",
+        "explanation_length": 410,
+        "latency_ms": 1963.71,
+        "prompt_tokens": 126,
+        "returned_tier": "low",
+        "scenario_id": "ticket-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003"
+        ],
+        "tier_agreement": false,
+        "total_tokens": 247
+      },
+      {
+        "completion_tokens": 121,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A pre-authentication vulnerability gap exists on a workstation. While the account lacks proper pre-authentication controls (Kerberos pre-authentication bypass potential), the risk is moderated by the asset not being classified as critical infrastructure or a crown jewel. The risk score of 50/100 reflects this balance\u2014the vulnerability is exploitable but on a lower-value target.",
+        "explanation_length": 380,
+        "latency_ms": 2551.02,
+        "prompt_tokens": 130,
+        "returned_tier": "medium",
+        "scenario_id": "asrep-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 251
+      },
+      {
+        "completion_tokens": 106,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A delegated certificate template with moderate privilege impact represents a medium-tier risk. Delegation of certificate template permissions could enable privilege escalation if an attacker gains control of the delegated entity, though the impact is characterized as moderate rather than critical. The risk score of 50/100 aligns with medium severity.",
+        "explanation_length": 352,
+        "latency_ms": 2897.19,
+        "prompt_tokens": 124,
+        "returned_tier": "medium",
+        "scenario_id": "certificate-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 230
+      },
+      {
+        "completion_tokens": 129,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "Administrative share access to an application host represents a moderate risk. While administrative shares (C$, ADMIN$, IPC$) are legitimate for system management, their use suggests potential lateral movement capabilities. The fact that access does not extend to directory control assets (likely domain controllers) limits the scope of compromise. However, reaching application hosts via admin shares can enable further exploitation, data exfiltration, or persistence mechanisms.",
+        "explanation_length": 480,
+        "latency_ms": 3227.54,
+        "prompt_tokens": 123,
+        "returned_tier": "medium",
+        "scenario_id": "share-medium",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 252
+      },
+      {
+        "completion_tokens": 95,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "Risk score of 20/100 indicates low severity. The scenario describes an isolated service-ticket observation with low modeled likelihood and impact. The system is isolated, limiting exposure and propagation potential. No indicators of active compromise or widespread effects are present.",
+        "explanation_length": 285,
+        "latency_ms": 3034.04,
+        "prompt_tokens": 123,
+        "returned_tier": "low",
+        "scenario_id": "ticket-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 218
+      },
+      {
+        "completion_tokens": 96,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "A pre-authentication gap exists on a low-value isolated identity. The isolation and low-value nature of the identity significantly limit exploitation potential and blast radius. Pre-authentication vulnerabilities typically require additional attack steps and are less critical when affecting non-sensitive accounts.",
+        "explanation_length": 315,
+        "latency_ms": 6054.26,
+        "prompt_tokens": 127,
+        "returned_tier": "low",
+        "scenario_id": "asrep-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 223
+      },
+      {
+        "completion_tokens": 108,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "A sandbox certificate template exposure presents minimal risk. The sandbox environment is isolated by design, limiting real-world impact. The scenario explicitly states there is no path to sensitive assets, which significantly constrains the threat potential. Certificate template exposure in a non-production sandbox context does not provide attackers meaningful access to production systems or critical data.",
+        "explanation_length": 410,
+        "latency_ms": 1820.1,
+        "prompt_tokens": 120,
+        "returned_tier": "low",
+        "scenario_id": "certificate-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 228
+      },
+      {
+        "completion_tokens": 136,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The scenario describes an isolated admin-share relationship with low path centrality. The term 'isolated' indicates limited network connectivity or access paths, and 'low path centrality' suggests minimal importance in the overall network graph structure. This configuration presents reduced risk for lateral movement or privilege escalation through administrative shares, as the compromised resource has few alternative pathways to propagate threats. The risk score of 20/100 aligns with this assessment.",
+        "explanation_length": 505,
+        "latency_ms": 5441.84,
+        "prompt_tokens": 121,
+        "returned_tier": "low",
+        "scenario_id": "share-low",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 257
+      },
+      {
+        "completion_tokens": 125,
+        "deterministic_tier": "critical",
+        "evidence_grounded": true,
+        "explanation": "A service ticket (T1558.003) followed by admin-share access (T1021.002) to tier-0 control represents a critical privilege escalation pathway. The sequence indicates potential lateral movement from a compromised service account through administrative shares to reach highest-privilege systems. Tier-0 control compromise poses existential risk to infrastructure.",
+        "explanation_length": 360,
+        "latency_ms": 1895.79,
+        "prompt_tokens": 134,
+        "returned_tier": "critical",
+        "scenario_id": "kerberoast-critical-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003",
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 259
+      },
+      {
+        "completion_tokens": 108,
+        "deterministic_tier": "critical",
+        "evidence_grounded": true,
+        "explanation": "A certificate template misconfiguration combined with pre-authentication bypass creates an attack path to directory crown jewels (domain controllers/AD infrastructure). This represents a complete compromise vector leveraging PKI weaknesses to bypass authentication controls and achieve privilege escalation to the highest privilege level in Active Directory.",
+        "explanation_length": 358,
+        "latency_ms": 3032.48,
+        "prompt_tokens": 130,
+        "returned_tier": "critical",
+        "scenario_id": "certificate-critical-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1649",
+          "T1558.004"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 238
+      },
+      {
+        "completion_tokens": 137,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "A pre-authentication security gap that enables lateral movement to a privileged application host represents a significant risk. The scenario describes a direct pathway for unauthorized access to move laterally within the network toward critical infrastructure. With a risk score of 75/100, this indicates substantial vulnerability. The pre-authentication nature means attackers can exploit this without valid credentials, and the target being a privileged application host elevates potential impact.",
+        "explanation_length": 499,
+        "latency_ms": 1966.49,
+        "prompt_tokens": 131,
+        "returned_tier": "high",
+        "scenario_id": "asrep-high-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004",
+          "T1021.002"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 268
+      },
+      {
+        "completion_tokens": 144,
+        "deterministic_tier": "high",
+        "evidence_grounded": true,
+        "explanation": "A certificate enrollment control accessible via admin share represents significant risk. Admin shares are standard network resources typically restricted to administrators, but exposure of certificate template management creates potential for certificate-based attacks. An attacker gaining access could manipulate certificate templates to issue fraudulent certificates, enabling lateral movement, persistence, or impersonation. The stated high impact combined with the risk score of 75/100 and the privileged nature of certificate enrollment justify a high-tier classification.",
+        "explanation_length": 577,
+        "latency_ms": 3141.56,
+        "prompt_tokens": 129,
+        "returned_tier": "high",
+        "scenario_id": "share-high-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1021.002",
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 273
+      },
+      {
+        "completion_tokens": 115,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "A service ticket has been observed interacting with a delegated certificate relationship. The scenario indicates moderate impact potential. The risk score of 50/100 and moderate impact classification support a medium-tier assessment. This configuration involves credential delegation mechanisms that could potentially be leveraged for lateral movement or privilege escalation if compromised.",
+        "explanation_length": 391,
+        "latency_ms": 2187.76,
+        "prompt_tokens": 127,
+        "returned_tier": "medium",
+        "scenario_id": "ticket-medium-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.003",
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 242
+      },
+      {
+        "completion_tokens": 143,
+        "deterministic_tier": "medium",
+        "evidence_grounded": true,
+        "explanation": "Two identity weaknesses are present in the scenario, which elevates risk from low to medium. However, the attack path terminates outside the critical asset zone, preventing progression to high-risk outcomes. The risk score of 50/100 aligns with medium severity\u2014indicating notable but contained vulnerability. The pre-authentication and service ticket evidence terms suggest Kerberos-related identity issues, but without reaching critical assets, the impact remains limited.",
+        "explanation_length": 473,
+        "latency_ms": 3992.91,
+        "prompt_tokens": 132,
+        "returned_tier": "medium",
+        "scenario_id": "asrep-medium-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1558.004",
+          "T1558.003"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 275
+      },
+      {
+        "completion_tokens": 92,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "The scenario describes a certificate relationship within a sandbox environment that lacks a modeled path to sensitive assets. This indicates isolation from critical resources, suggesting limited immediate risk. The certificate template activity is contained within a sandbox context with no identified attack chain to sensitive targets.",
+        "explanation_length": 336,
+        "latency_ms": 1947.68,
+        "prompt_tokens": 126,
+        "returned_tier": "low",
+        "scenario_id": "certificate-low-2",
+        "technique_valid": true,
+        "techniques": [
+          "T1649"
+        ],
+        "tier_agreement": true,
+        "total_tokens": 218
+      },
+      {
+        "completion_tokens": 85,
+        "deterministic_tier": "low",
+        "evidence_grounded": true,
+        "explanation": "Risk score of 20/100 indicates low severity. The scenario explicitly states 'low likelihood' and 'no evidence of privilege escalation.' The isolated share relationship limits exposure. No indicators of active compromise or malicious activity are present in the scenario text.",
+        "explanation_length": 275,
+        "latency_ms": 1821.3,
+        "prompt_tokens": 130,
+        "returned_tier": "low",
+        "scenario_id": "share-low-2",
+        "technique_valid": true,
+        "techniques": [],
+        "tier_agreement": true,
+        "total_tokens": 215
+      }
+    ],
+    "scenario_count": 20,
+    "technique_valid_rate": 1.0,
+    "tier_agreement_rate": 0.95
+  }
+}

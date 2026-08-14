@@ -198,6 +198,7 @@ def build_router(
     identity = IdentityService(session_factory, settings.auth_bootstrap_token)
     limiter = RateLimiter(settings.rate_limit_requests_per_minute)
     copilot_limiter = RateLimiter(settings.ai_requests_per_minute)
+    deep_ai_limiter = RateLimiter(settings.ai_deep_requests_per_minute)
     ai_audit = AIAuditLogger(
         settings.ai_audit_log_path,
         retention_days=settings.ai_audit_retention_days,
@@ -1346,6 +1347,7 @@ def build_router(
         dependencies=[
             Depends(permission_dependency("analyze")),
             Depends(rate_limit_dependency(copilot_limiter)),
+            Depends(rate_limit_dependency(deep_ai_limiter)),
         ],
     )
     def copilot_explain(request: CopilotExplainRequest) -> CopilotExplainResponse:

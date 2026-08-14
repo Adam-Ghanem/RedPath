@@ -62,8 +62,8 @@ def test_ai_risk_success_is_grounded_in_deterministic_tier(monkeypatch: pytest.M
     service = AIService(_settings())
     calls = []
 
-    def fake_provider(*, system: str, user: str) -> dict:
-        calls.append((system, user))
+    def fake_provider(*, system: str, user: str, model_tier: str) -> dict:
+        calls.append((system, user, model_tier))
         return {
             "explanation": "The path reaches a crown jewel through the supplied edge evidence.",
             "tier": "low",
@@ -79,6 +79,7 @@ def test_ai_risk_success_is_grounded_in_deterministic_tier(monkeypatch: pytest.M
     )
 
     assert calls
+    assert calls[0][2] == "fast"
     assert result.ai_enhanced is True
     assert result.tier == "critical"
     assert result.centrality_score == 0.75
@@ -88,7 +89,7 @@ def test_ai_risk_success_is_grounded_in_deterministic_tier(monkeypatch: pytest.M
 def test_ai_risk_provider_failure_returns_deterministic_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     service = AIService(_settings())
 
-    def failing_provider(*, system: str, user: str) -> dict:
+    def failing_provider(*, system: str, user: str, model_tier: str) -> dict:
         raise RuntimeError("simulated outage")
 
     monkeypatch.setattr(service, "_call_provider", failing_provider)
@@ -112,11 +113,10 @@ def test_ai_disabled_does_not_call_provider(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_copilot_cache_avoids_second_provider_call(monkeypatch: pytest.MonkeyPatch) -> None:
     service = AIService(_settings())
-    calls = 0
+    calls: list[str] = []
 
-    def fake_provider(*, system: str, user: str) -> dict:
-        nonlocal calls
-        calls += 1
+    def fake_provider(*, system: str, user: str, model_tier: str) -> dict:
+        calls.append(model_tier)
         return {
             "explanation": "The stored finding is mapped to the supplied evidence.",
             "evidence_basis": ["Finding severity: high"],
@@ -138,7 +138,7 @@ def test_copilot_cache_avoids_second_provider_call(monkeypatch: pytest.MonkeyPat
         evidence_basis=["Finding severity: high"],
     )
 
-    assert calls == 1
+    assert calls == ["deep"]
     assert first.ai_enhanced is True
     assert second.cached is True
 
@@ -177,7 +177,7 @@ def _bootstrap(client: TestClient) -> dict[str, str]:
 def test_copilot_has_separate_endpoint_rate_limit(tmp_path: Path) -> None:
     settings = Settings(
         database_url=f"sqlite:///{tmp_path / f'ai-{uuid4().hex}.db'}",
-        audit_log_path=str(tmp_path / f'ai-{uuid4().hex}.jsonl'),
+        audit_log_path=str(tmp_path / f"ai-{uuid4().hex}.jsonl"),
         auth_bootstrap_token="ai-feature-bootstrap-token",
         rate_limit_requests_per_minute=240,
         ai_requests_per_minute=1,
@@ -254,8 +254,8 @@ def test_ai_audit_logger_hashes_context_and_applies_read_retention(tmp_path: Pat
 def test_ai_audit_and_feedback_endpoints_are_tenant_and_role_protected(tmp_path: Path) -> None:
     settings = Settings(
         database_url=f"sqlite:///{tmp_path / f'ai-audit-{uuid4().hex}.db'}",
-        audit_log_path=str(tmp_path / f'ai-core-{uuid4().hex}.jsonl'),
-        ai_audit_log_path=str(tmp_path / f'ai-events-{uuid4().hex}.jsonl'),
+        audit_log_path=str(tmp_path / f"ai-core-{uuid4().hex}.jsonl"),
+        ai_audit_log_path=str(tmp_path / f"ai-events-{uuid4().hex}.jsonl"),
         auth_bootstrap_token="ai-feature-bootstrap-token",
         rate_limit_requests_per_minute=240,
     )
@@ -299,3 +299,108 @@ def test_risk_response_requires_review_when_provider_confidence_is_low(monkeypat
 
     assert result.requires_human_review is True
     assert result.confidence_score == 0.2
+
+
+def test_anthropic_provider_selects_tier_specific_model_budget_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = AnthropicProvider(
+        _settings(
+            anthropic_model_fast="claude-haiku-4-5",
+            anthropic_model_deep="claude-sonnet-4-6",
+            anthropic_max_tokens_fast=700,
+            anthropic_max_tokens_deep=1900,
+            anthropic_timeout_seconds_fast=7.0,
+            anthropic_timeout_seconds_deep=21.0,
+        )
+    )
+    calls = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+    class Client:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, *, headers, json):
+            calls.append(json)
+            return Response()
+
+    monkeypatch.setattr("app.services.ai_risk.httpx.Client", Client)
+    assert provider.generate("prompt", {"bounded": True}, model_tier="fast") == "ok"
+    assert provider.generate("prompt", {"bounded": True}, model_tier="deep") == "ok"
+
+    assert calls[0]["timeout"] == 7.0
+    assert calls[1]["model"] == "claude-haiku-4-5"
+    assert calls[1]["max_tokens"] == 700
+    assert calls[2]["timeout"] == 21.0
+    assert calls[3]["model"] == "claude-sonnet-4-6"
+    assert calls[3]["max_tokens"] == 1900
+
+
+def test_legacy_anthropic_model_alias_warns_and_is_used() -> None:
+    settings = Settings(anthropic_model="legacy-model")
+    with pytest.warns(DeprecationWarning, match="ANTHROPIC_MODEL"):
+        assert settings.model_for_tier("fast") == "legacy-model"
+
+
+def test_copilot_deep_tier_has_independent_stricter_rate_limit(tmp_path: Path) -> None:
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / f'ai-deep-{uuid4().hex}.db'}",
+        audit_log_path=str(tmp_path / f"ai-deep-{uuid4().hex}.jsonl"),
+        ai_audit_log_path=str(tmp_path / f"ai-deep-events-{uuid4().hex}.jsonl"),
+        auth_bootstrap_token="ai-feature-bootstrap-token",
+        rate_limit_requests_per_minute=240,
+        ai_requests_per_minute=20,
+        ai_deep_requests_per_minute=1,
+    )
+    client = TestClient(create_app(settings))
+    headers = _bootstrap(client)
+
+    first = client.post("/api/v1/copilot/explain", headers=headers, json={"finding_id": "missing"})
+    second = client.post("/api/v1/copilot/explain", headers=headers, json={"finding_id": "missing"})
+
+    assert first.status_code == 404
+    assert second.status_code == 429
+
+
+def test_none_provider_risk_and_copilot_fallbacks_do_not_depend_on_model_tier() -> None:
+    service = AIService(_settings(ai_features_enabled=False, ai_provider="none"))
+    risk = service.assess_risk(_path(), centrality_score=0.75, detection_observations=[])
+    copilot = service.explain_copilot(
+        source_type="finding",
+        source_id="finding-none",
+        context={"title": "Stored finding", "severity": "high", "technique_id": "T1558.003"},
+        evidence_basis=["Finding severity: high"],
+    )
+
+    assert risk.ai_enhanced is False
+    assert risk.tier == "critical"
+    assert copilot.ai_enhanced is False
+    assert "Stored finding" in copilot.explanation
+
+
+def test_ai_audit_records_selected_model_tier(tmp_path: Path) -> None:
+    audit = AIAuditLogger(str(tmp_path / "tier-audit.jsonl"), retention_days=365, max_entries=20)
+    service = AIService(_settings(ai_features_enabled=False, ai_provider="none"), audit=audit)
+
+    service.assess_risk(_path(), centrality_score=0.5, detection_observations=[])
+    service.explain_copilot(
+        source_type="finding",
+        source_id="finding-tier-audit",
+        context={"title": "Tier audit finding", "severity": "low", "technique_id": "T1649"},
+        evidence_basis=["Finding severity: low"],
+    )
+
+    events = audit.list_events(tenant_id="system", limit=10)
+    tiers = [event["details"]["response_summary"]["model_tier"] for event in reversed(events)]
+    assert tiers == ["fast", "deep"]

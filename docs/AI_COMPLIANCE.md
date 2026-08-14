@@ -77,7 +77,12 @@ For Anthropic mode:
 AI_FEATURES_ENABLED=true
 AI_PROVIDER=anthropic
 ANTHROPIC_API_KEY=<deployment-secret>
-ANTHROPIC_MODEL=claude-haiku-4-5
+ANTHROPIC_MODEL_FAST=claude-haiku-4-5
+ANTHROPIC_MODEL_DEEP=claude-sonnet-4-6
+ANTHROPIC_TIMEOUT_SECONDS_FAST=15
+ANTHROPIC_TIMEOUT_SECONDS_DEEP=30
+ANTHROPIC_MAX_TOKENS_FAST=1200
+ANTHROPIC_MAX_TOKENS_DEEP=2400
 ```
 
 Never commit the key or place it in a request body, URL, audit event, or frontend bundle.
@@ -110,3 +115,28 @@ The deterministic graph and risk engine remain authoritative. AI output is advis
 ## Retention and integrity
 
 AI audit retention is controlled by `AI_AUDIT_RETENTION_DAYS` and `AI_AUDIT_MAX_ENTRIES`; the defaults are 365 days and 10,000 returned entries. Retention is applied when reading the review view so the append-only source remains intact for integrity verification and external archival. Operators should archive or delete the underlying file according to their approved records schedule and access policy. The audit stream uses the same chained digest pattern as the core audit log, and raw prompt data is intentionally unavailable for later recovery.
+
+
+## Model tiers and measured comparison
+
+Anthropic-backed calls now use two server-selected tiers. Risk scoring uses the fast tier because it is latency-sensitive and the deterministic risk engine remains authoritative. Copilot explanations use the deep tier because they are analyst-facing and require more contextual reasoning. `AI_PROVIDER=none` bypasses both model tiers and keeps the deterministic fallbacks unchanged.
+
+| Endpoint/use | Tier | Default verified model | Timeout | Max output tokens | Rate control |
+| --- | --- | --- | ---: | ---: | ---: |
+| `POST /api/v1/risk/ai-assess` | `fast` | `claude-haiku-4-5` | 15 s | 1,200 | General AI limiter |
+| `POST /api/v1/copilot/explain` | `deep` | `claude-sonnet-4-6` | 30 s | 2,400 | General copilot limiter plus deep limiter: 5/min by default |
+
+The requested `claude-sonnet-5` identifier was not present in the live model catalog captured on 2026-08-14. The implementation therefore uses the verified available `claude-sonnet-4-6` identifier rather than configuring an unverified model name. The captured catalog and pricing evidence are in `.artifacts/live-llm-model-catalog.json`.
+
+The comparison harness is `backend/tests/ai_eval/run_comparison.py` and uses the same 20 synthetic scenarios for both models through the OpenAI-compatible built-in proxy. It is not a direct Anthropic billing run, so the result is a model-quality and routing signal rather than a production SLA guarantee. The exact artifact is `.artifacts/ai-model-comparison.json`.
+
+| Metric | Fast: `claude-haiku-4-5` | Deep: `claude-sonnet-4-6` | Observed change |
+| --- | ---: | ---: | ---: |
+| Tier agreement with deterministic engine | 19/20 = 95% | 20/20 = 100% | +5 percentage points |
+| Valid MITRE technique output | 20/20 = 100% | 20/20 = 100% | No change; ceiling reached |
+| Evidence-term grounding check | 20/20 = 100% | 20/20 = 100% | No change; ceiling reached |
+| Latency p50 | 2,369.39 ms | 3,853.69 ms | +1,484.30 ms |
+| Latency p95 | 5,441.84 ms | 4,652.27 ms | -789.57 ms in this run |
+| Estimated run cost | $0.014430 | $0.048990 | 3.40× higher |
+
+The evidence supports a narrow upgrade decision: deep tiering improved deterministic-tier agreement on this 20-case run, while technique validity and the bounded evidence-term check were already at 100%. The higher cost and p50 latency justify keeping the deep tier restricted to copilot-style reasoning rather than applying it to all endpoints. These results do not prove universal model superiority; future changes to prompts, model versions, or production traffic require another evaluation run.
