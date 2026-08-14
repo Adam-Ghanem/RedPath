@@ -24,7 +24,7 @@ import { buildAnalystConsoleModel, formatUtc } from "./model";
 
 import "./analyst-console.css";
 
-const AnalystDrilldown = lazy(() => import("./AnalystDrilldown"));
+const AnalystWorkspaceNavigator = lazy(() => import("./AnalystWorkspaceNavigator"));
 
 type ConsolePanel = "priorities" | "detection" | "evidence";
 
@@ -221,7 +221,7 @@ export function AnalystConsole({ api = consoleApi, onExit = () => { window.locat
       </section>
 
       <Suspense fallback={<section className="soc-drilldown" role="status" aria-live="polite"><div className="soc-drilldown-loading"><Radar size={18} /><span>Loading analyst detail views…</span></div></section>}>
-        <AnalystDrilldown api={api} session={session} initialEvidence={state.snapshot.evidence} initialPcapAnalyses={state.snapshot.pcapAnalyses} />
+        <AnalystWorkspaceNavigator api={api} session={session} initialEvidence={state.snapshot.evidence} initialPcapAnalyses={state.snapshot.pcapAnalyses} snapshotRefreshedAt={state.refreshedAt} />
       </Suspense>
     </main>
   </div>;
