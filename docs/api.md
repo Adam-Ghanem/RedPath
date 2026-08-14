@@ -140,6 +140,12 @@ The result is read-only. It does not create remediation records, modify assets o
 
 `analysis_id` and `graph_fingerprint` are stable for the same tenant-scoped graph and bounded analysis parameters. A path explanation includes asset and evidence references plus the remediation priority and rationale. Resource limits cap graph size and path enumeration; truncated results report a warning and must not be treated as exhaustive.
 
+### Grounded AI assessment
+
+`POST /api/v1/risk/ai-assess` and `POST /api/v1/copilot/explain` require an authenticated principal with the `analyze` permission. The tenant and actor are derived from the bearer session. A modeled attack path must reference at least one asset or evidence record authorized for that tenant; cross-tenant references are rejected with the platform’s generic authorization response.
+
+`AI_FEATURES_ENABLED` defaults to `false`. Disabled, unavailable, timed-out, rate-limited, or invalid provider responses return the deterministic score and tier with an explicit fallback reason, so the risk endpoint remains available without model availability. When enabled, the external provider receives only minimized deterministic scores, centrality, counts, technique IDs, severity, and categorical evidence-basis tokens. Direct asset/evidence IDs, host or user identifiers, IPs, credentials, packet data, and raw evidence are not sent. The cache is bounded and tenant-scoped; audit details contain only aggregate status and a context digest.
+
 ## Purple-team request
 
 ```json

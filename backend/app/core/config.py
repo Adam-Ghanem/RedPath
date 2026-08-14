@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     release: str = "dev"
     auth_bootstrap_token: str = ""
     rate_limit_requests_per_minute: int = 120
+    ai_features_enabled: bool = False
+    ai_provider: str = "openai_compatible"
+    ai_model: str = "gpt-5-mini"
+    ai_api_key: str = ""
+    ai_api_base: str = ""
+    ai_request_timeout_seconds: int = 8
+    ai_copilot_requests_per_minute: int = 10
+    ai_cache_ttl_seconds: int = 300
+    ai_cache_max_entries: int = 256
+    ai_max_context_chars: int = 4000
     pcap_max_upload_bytes: int = 50 * 1024 * 1024
     pcap_max_packets: int = 100_000
     pcap_max_endpoints: int = 100

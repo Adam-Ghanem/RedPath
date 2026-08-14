@@ -263,6 +263,88 @@ class AttackPathRemediationLink(BaseModel):
     rationale: str = Field(min_length=1, max_length=2000)
 
 
+class CopilotDetectionEvidence(BaseModel):
+    """Bounded evidence fields permitted in a grounded explanation request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str = Field(min_length=1, max_length=128)
+    severity: Literal["info", "low", "medium", "high", "critical"] = "info"
+    technique_id: str | None = Field(default=None, max_length=32, pattern=r"^T[0-9]{4}(?:\.[0-9]{3})?$")
+    signal: str = Field(default="", max_length=512)
+
+
+class CopilotAttackPathSummary(BaseModel):
+    """Minimized attack-path context; raw graph nodes and edges are not accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    risk_score: float = Field(ge=0, le=100)
+    centrality: float = Field(default=0.0, ge=0, le=1)
+    hop_count: int = Field(default=0, ge=0, le=12)
+    asset_count: int = Field(default=0, ge=0, le=50)
+    evidence_count: int = Field(default=0, ge=0, le=50)
+    asset_ids: list[str] = Field(default_factory=list, max_length=50)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=50)
+    technique_ids: list[str] = Field(default_factory=list, max_length=32)
+    rationale: str = Field(default="", max_length=512)
+
+
+class CopilotExplainRequest(BaseModel):
+    """Client-supplied sanitized context; tenant and actor come from the server session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject_type: Literal["finding", "attack_path"]
+    subject_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(default="", max_length=256)
+    deterministic_score: float = Field(ge=0, le=100)
+    centrality: float = Field(default=0.0, ge=0, le=1)
+    deterministic_tier: Literal["low", "medium", "high", "critical"]
+    attack_path: CopilotAttackPathSummary | None = None
+    evidence: list[CopilotDetectionEvidence] = Field(default_factory=list, max_length=8)
+
+
+class CopilotProviderOutput(BaseModel):
+    """Strict provider response; deterministic tier is never provider-controlled."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    explanation: str = Field(min_length=1, max_length=1200)
+    next_actions: list[str] = Field(min_length=1, max_length=2)
+    confidence_note: str = Field(min_length=1, max_length=512)
+
+
+class CopilotExplanationResponse(BaseModel):
+    """Grounded explanation with explicit deterministic or non-AI fallback status."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = "1.0"
+    tenant_id: str = Field(min_length=1, max_length=128)
+    subject_type: Literal["finding", "attack_path"]
+    subject_id: str = Field(min_length=1, max_length=128)
+    deterministic_score: float = Field(ge=0, le=100)
+    deterministic_tier: Literal["low", "medium", "high", "critical"]
+    tier: Literal["low", "medium", "high", "critical"]
+    explanation: str = Field(min_length=1, max_length=1200)
+    next_actions: list[str] = Field(min_length=1, max_length=2)
+    confidence_note: str = Field(min_length=1, max_length=512)
+    ai_status: Literal["disabled", "fallback", "generated"]
+    fallback_reason: Literal[
+        "none",
+        "ai_disabled",
+        "provider_unavailable",
+        "provider_timeout",
+        "provider_rate_limited",
+        "provider_error",
+        "provider_invalid_output",
+    ] = "none"
+    context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    data_egress: Literal["none", "sanitized_context_only"]
+    cache_hit: bool = False
+
+
 class AttackPathAnalysisRecord(BaseModel):
     """Persistence-ready aggregate; actor identity is supplied by the server boundary."""
 

@@ -52,6 +52,8 @@ from app.schemas.contracts import (
     CampaignResponse,
     CampaignTimelineEvent,
     CaseStatusUpdate,
+    CopilotExplainRequest,
+    CopilotExplanationResponse,
     CorrelatedRisk,
     CorrelationRequest,
     CoverageScorecard,
@@ -110,6 +112,7 @@ from app.services.ad_detection import detect_ad_findings
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
 from app.services.case_governance import list_governance_history
 from app.services.case_ops import list_cases, update_case_status
+from app.services.copilot_explanation import build_copilot_service
 from app.services.correlation import correlate_findings
 from app.services.detection_framework import DetectionRuleCatalog
 from app.services.discovery_jobs import (
@@ -188,6 +191,8 @@ def build_router(
     session_factory = create_session_factory(settings.database_url)
     identity = IdentityService(session_factory, settings.auth_bootstrap_token)
     limiter = RateLimiter(settings.rate_limit_requests_per_minute)
+    copilot_limiter = RateLimiter(settings.ai_copilot_requests_per_minute)
+    copilot_service = build_copilot_service(settings)
     authenticate = principal_dependency(identity, limiter)
     protected_router = APIRouter(prefix="", dependencies=[Depends(authenticate)])
 
@@ -197,6 +202,35 @@ def build_router(
         if principal:
             enriched.setdefault("tenant_id", principal.tenant_id)
         return audit.record(operation, enriched, actor=actor or current_actor())
+
+    def authorized_ai_reference_ids(principal: object) -> tuple[set[str], set[str]]:
+        tenant_id = getattr(principal, "tenant_id", "")
+        with session_factory() as session:
+            asset_ids = {
+                asset_id for (asset_id,) in session.query(Asset.id).filter(Asset.tenant_id == tenant_id).all()
+            }
+            evidence_ids = {
+                evidence_id
+                for (evidence_id,) in session.query(EvidenceItem.id)
+                .filter(EvidenceItem.tenant_id == tenant_id)
+                .all()
+            }
+        return asset_ids, evidence_ids
+
+    def assess_with_copilot(request: CopilotExplainRequest) -> CopilotExplanationResponse:
+        principal = get_principal()
+        authorized_asset_ids, authorized_evidence_ids = authorized_ai_reference_ids(principal)
+        try:
+            return copilot_service.explain(
+                request,
+                authorized_tenant_id=principal.tenant_id,
+                authorized_asset_ids=authorized_asset_ids,
+                authorized_evidence_ids=authorized_evidence_ids,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def raise_integration_error(exc: IntegrationKernelError) -> None:
         detail = exc.error.model_dump(mode="json")
@@ -1295,6 +1329,56 @@ def build_router(
                 "asset_count": len(result.asset_ids),
                 "evidence_count": len(result.evidence_ids),
                 "remediation_link_count": len(result.remediation_links),
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/copilot/explain",
+        response_model=CopilotExplanationResponse,
+        dependencies=[
+            Depends(permission_dependency("analyze")),
+            Depends(rate_limit_dependency(copilot_limiter)),
+        ],
+    )
+    def copilot_explain(request: CopilotExplainRequest) -> CopilotExplanationResponse:
+        result = assess_with_copilot(request)
+        record_audit(
+            "copilot.explanation_generated",
+            {
+                "subject_type": result.subject_type,
+                "deterministic_tier": result.deterministic_tier,
+                "tier": result.tier,
+                "ai_status": result.ai_status,
+                "fallback_reason": result.fallback_reason,
+                "context_sha256": result.context_sha256,
+                "data_egress": result.data_egress,
+                "cache_hit": result.cache_hit,
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/risk/ai-assess",
+        response_model=CopilotExplanationResponse,
+        dependencies=[
+            Depends(permission_dependency("analyze")),
+            Depends(rate_limit_dependency(copilot_limiter)),
+        ],
+    )
+    def risk_ai_assess(request: CopilotExplainRequest) -> CopilotExplanationResponse:
+        result = assess_with_copilot(request)
+        record_audit(
+            "risk.ai_assessed",
+            {
+                "subject_type": result.subject_type,
+                "deterministic_tier": result.deterministic_tier,
+                "tier": result.tier,
+                "ai_status": result.ai_status,
+                "fallback_reason": result.fallback_reason,
+                "context_sha256": result.context_sha256,
+                "data_egress": result.data_egress,
+                "cache_hit": result.cache_hit,
             },
         )
         return result

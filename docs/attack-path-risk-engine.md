@@ -80,6 +80,36 @@ Each ranked path receives a stable tenant-scoped `path_id`, an `analysis_id`, an
 
 The route records the server-derived user ID in the in-memory persistence-ready record and uses aggregate-only audit details. Client request fields never determine actor, owner, reviewer, approver, or tenant identity.
 
+## Scale, versioning, and projection interfaces
+
+Every analysis response includes `score_metadata.score_version: "risk-v1"` and `formula: "conservative-edge-v1"`. The weighted formula and factor weights are part of the response contract so downstream consumers can reproduce and regression-test a result without inferring the scoring version from code. A score-version change must be additive or explicitly versioned; it must not silently reinterpret historical results.
+
+The request and response expose effective `query_bounds` and `traversal_steps`. Nodes, edges, hops, paths, explanation characters, and traversal steps are capped. The engine stops path enumeration at either the path or traversal budget and marks the response as truncated with a warning. Truncated results are safe summaries, not exhaustive graph inventories.
+
+`project_attack_path_risk` is a bounded, read-only projection interface for consoles, caches, and exports. It returns at most 50 paths, 50 choke-point IDs, 500 asset IDs, and 500 evidence IDs, and trims each projection rationale to 512 characters. The cache is process-local and keyed by the complete response plus projection limit; returned models are defensive copies, so a caller cannot mutate shared cached state.
+
+`export_attack_path_projection` and `import_attack_path_projection` form a tenant-bound transport contract. Export requires the server-derived tenant, includes a canonical SHA-256 integrity digest, and contains identifiers and rationale only. Import requires the server-derived tenant, checks the envelope analysis ID, and verifies the digest before returning the read-only projection. Neither interface persists data or performs remote mutation.
+
+| Limit | Default | Maximum |
+| --- | ---: | ---: |
+| Graph nodes | 5,000 | 5,000 |
+| Graph edges | 20,000 | 20,000 |
+| Path hops | 8 | 12 |
+| Returned paths | 100 | 500 |
+| Traversal steps | 10,000 | 100,000 |
+| Explanation text per field | 2,000 | 2,000 |
+| Projection paths | 50 | 50 |
+
 ## Validation
 
-Focused tests are in `backend/tests/test_attack_path_risk.py`. They cover weighted scoring and explanations, deterministic ranking, hybrid path labeling, choke-point priority, unreachable crown-jewel reporting, endpoint validation, and resource-limit validation. Existing graph, correlation, API, and platform-contract tests remain part of the regression suite.
+Focused tests are in `backend/tests/test_attack_path_risk.py`. They cover weighted scoring and explanations, deterministic ranking, score-version metadata, sensitivity monotonicity, tenant-safe projection caching, import/export integrity, bounded branching fixtures, hybrid path labeling, choke-point priority, unreachable crown-jewel reporting, endpoint validation, and resource-limit validation. Existing graph, correlation, API, and platform-contract tests remain part of the regression suite.
+
+This phase adds no database tables or migration files. Rollback is therefore code-only: revert the single release commit, or disable consumers of the additive projection fields while retaining the existing analysis response. No destructive rollback or data rewrite is required.
+
+## Grounded AI explanation and opt-out
+
+The optional grounded explanation service is disabled by default with `AI_FEATURES_ENABLED=false`. Operators can opt out permanently by leaving the flag disabled; when disabled, the protected assessment and copilot routes return the deterministic tier, deterministic score, bounded next actions, and an explicit `ai_disabled` fallback status. The deterministic graph engine and detection logic never depend on model availability.
+
+The protected `/api/v1/risk/ai-assess` and `/api/v1/copilot/explain` routes derive tenant and actor context from the authenticated session and require the existing `analyze` permission. Modeled attack-path requests must reference at least one server-authorized asset or evidence record, and every supplied asset/evidence reference is checked against the authenticated tenant before assessment. Identical sanitized payloads are cached separately per tenant, with bounded TTL and entry count.
+
+External provider context contains only minimized deterministic scores, centrality, hop and count summaries, technique IDs, severity, and categorical evidence-basis tokens. Direct asset IDs, evidence IDs, hostnames, hosts, users, usernames, accounts, principals, IP addresses, credentials, packet data, and raw provider payloads are excluded or pseudonymized before egress. The service sends no context when disabled, and provider failures, timeouts, rate limits, invalid output, or unavailability return deterministic fallback without failing the risk endpoint. Audit records contain aggregate status, score tier, context digest, cache status, and egress mode; they do not contain the prompt or raw evidence.
