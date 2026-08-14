@@ -5,7 +5,7 @@ The RedPath command-line interface is intended for **authorized company networks
 ## Command Model
 
 ```text
-red scan <target> --scope-file <approved-scope-file> --confirm <authorization-id>
+red scan <target> --scope-file <approved-scope-file> --authorization-id <authorization-id> --operator <operator-id>
 ```
 
 The initial implementation does not require `sudo`. Its discovery profile uses a TCP-connect scan and avoids raw-packet behavior. Running the command as root does not unlock additional scan modes.
@@ -15,7 +15,7 @@ The initial implementation does not require `sudo`. Its discovery profile uses a
 | Control | Requirement |
 | --- | --- |
 | Scope | The target must be an IP address in a configured CIDR allowlist. Hostnames, public IPs, URLs outside an approved web scope, and CIDR expansion are rejected. |
-| Confirmation | An explicit authorization identifier must be supplied for every non-dry-run scan. |
+| Authorization | An explicit authorization identifier and operator identity must be supplied for every scan, including dry runs. |
 | Audit | The target, scope identifier, authorization identifier, profile, timestamps, command plan, result summary, and operator must be written to an append-only audit record. |
 | Rate limits | Safe defaults apply: bounded ports, TCP connect only, low timing profile, timeouts, and a maximum target count. |
 | Web enumeration | Only explicitly allowed HTTP(S) base URLs are eligible. The initial profile uses a small approved wordlist, single-host traversal, low concurrency, response-size limits, and no authentication bypass. |

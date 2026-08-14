@@ -273,9 +273,12 @@ def _append_audit(path: Path, report: AuthorizedScanReport) -> None:
         "profile": report.profile,
         "dry_run": report.dry_run,
         "created_at": report.created_at,
-        "asset_count": len(report.recon.assets),
-        "candidate_count": len(report.candidates),
-        "web_observation_count": len(report.web_observations),
+        "command_plan": [command.model_dump(mode="json") for command in report.recon.commands],
+        "result_summary": {
+            "asset_count": len(report.recon.assets),
+            "candidate_count": len(report.candidates),
+            "web_observation_count": len(report.web_observations),
+        },
         "warnings": report.warnings,
     }
     with path.open("a", encoding="utf-8") as handle:

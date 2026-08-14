@@ -43,7 +43,29 @@ def test_authorized_scan_dry_run_is_scope_bound_and_audited(tmp_path: Path) -> N
     record = json.loads(audit_file.read_text(encoding="utf-8"))
     assert record["scope_id"] == "LAB-2026-0001"
     assert record["authorization_id"] == "CHG-2026-0001"
+    assert record["command_plan"][0]["tool"] == "nmap"
+    assert record["command_plan"][0]["executed"] is False
+    assert record["result_summary"] == {
+        "asset_count": 0,
+        "candidate_count": 0,
+        "web_observation_count": 0,
+    }
     assert oct(audit_file.stat().st_mode & 0o777) == "0o600"
+
+
+def test_audit_records_append_for_each_authorized_run(tmp_path: Path) -> None:
+    service = AuthorizedScanService(AuthorizedScope.from_file(_scope_file(tmp_path)))
+    audit_file = tmp_path / "audit.jsonl"
+    for authorization_id in ("CHG-2026-0001", "CHG-2026-0002"):
+        service.run(
+            "192.168.56.10",
+            authorization_id=authorization_id,
+            operator="security.analyst",
+            audit_file=audit_file,
+        )
+    records = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").splitlines()]
+    assert [record["authorization_id"] for record in records] == ["CHG-2026-0001", "CHG-2026-0002"]
+    assert len({record["scan_id"] for record in records}) == 2
 
 
 def test_authorized_scan_rejects_out_of_scope_target(tmp_path: Path) -> None:
