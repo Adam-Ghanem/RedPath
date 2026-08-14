@@ -1,0 +1,7 @@
+{
+  "scope_id": "LAB-2026-0001",
+  "allowed_cidrs": ["192.168.56.0/24"],
+  "allowed_web_origins": ["https://app.lab.example"],
+  "max_targets": 1,
+  "max_web_paths": 6
+}
