@@ -603,6 +603,10 @@ def build_router(
         retention_hours=settings.discovery_job_retention_hours,
         retention_max=settings.discovery_job_retention_max,
         recovery_timeout_seconds=settings.discovery_recovery_timeout_seconds,
+        lease_seconds=settings.discovery_lease_seconds,
+        retry_budget=settings.discovery_retry_budget,
+        checkpoint_max_bytes=settings.discovery_checkpoint_max_bytes,
+        result_max_bytes=settings.discovery_result_max_bytes,
     )
     telemetry_resilience = TelemetryResilienceStore(
         session_factory,

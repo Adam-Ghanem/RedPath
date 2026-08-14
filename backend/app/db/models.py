@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -151,6 +152,9 @@ class ScanRun(Base):
 
 class DiscoveryJob(Base):
     __tablename__ = "discovery_jobs"
+    __table_args__ = (
+        Index("ix_discovery_jobs_tenant_status_lease", "tenant_id", "status", "lease_expires_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
@@ -169,11 +173,26 @@ class DiscoveryJob(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recovery_count: Mapped[int] = mapped_column(Integer, default=0)
     recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    retry_budget: Mapped[int] = mapped_column(Integer, default=2)
+    retry_class: Mapped[str] = mapped_column(String(32), default="none")
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checkpoint_stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    result_compacted: Mapped[bool] = mapped_column(Boolean, default=False)
+    result_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class Asset(Base):
     __tablename__ = "assets"
+    __table_args__ = (
+        Index("ix_assets_tenant_ip", "tenant_id", "ip"),
+        Index("ix_assets_tenant_last_seen", "tenant_id", "last_seen_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(128), default="legacy", index=True)

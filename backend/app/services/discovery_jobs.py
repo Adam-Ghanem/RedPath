@@ -9,7 +9,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import String, cast, delete, func, or_, select
+from sqlalchemy import String, cast, delete, func, or_, select, update
 
 from app.core.audit import AuditLogger
 from app.db.models import Asset, DiscoveryJob, ScanRun, utcnow
@@ -27,6 +27,17 @@ class DiscoveryRateLimitExceeded(ValueError):
     """Raised when a tenant exceeds the bounded job submission rate."""
 
 
+class DiscoveryLeaseLost(RuntimeError):
+    """Raised when a worker no longer owns the tenant-scoped job lease."""
+
+
+_TRANSIENT_ERROR_TYPES = (TimeoutError, ConnectionError)
+_MAX_RETRY_BUDGET = 5
+_MAX_LEASE_SECONDS = 900
+_MAX_CHECKPOINT_BYTES = 16_384
+_MAX_RESULT_BYTES = 65_536
+
+
 class DiscoveryJobService:
     """Queue bounded discovery work and reconcile normalized assets idempotently."""
 
@@ -41,6 +52,10 @@ class DiscoveryJobService:
         retention_hours: int = 24,
         retention_max: int = 500,
         recovery_timeout_seconds: int = 300,
+        lease_seconds: int = 60,
+        retry_budget: int = 2,
+        checkpoint_max_bytes: int = 2048,
+        result_max_bytes: int = 8192,
     ) -> None:
         if retention_hours < 1:
             raise ValueError("retention_hours must be positive")
@@ -48,6 +63,14 @@ class DiscoveryJobService:
             raise ValueError("retention_max must be positive")
         if recovery_timeout_seconds < 1:
             raise ValueError("recovery_timeout_seconds must be positive")
+        if lease_seconds < 10 or lease_seconds > _MAX_LEASE_SECONDS:
+            raise ValueError("lease_seconds must be between 10 and 900")
+        if retry_budget < 0 or retry_budget > _MAX_RETRY_BUDGET:
+            raise ValueError("retry_budget must be between 0 and 5")
+        if checkpoint_max_bytes < 256 or checkpoint_max_bytes > _MAX_CHECKPOINT_BYTES:
+            raise ValueError("checkpoint_max_bytes is outside the safe range")
+        if result_max_bytes < 1024 or result_max_bytes > _MAX_RESULT_BYTES:
+            raise ValueError("result_max_bytes is outside the safe range")
         self.recon_service = recon_service
         self.session_factory = session_factory
         self.audit = audit
@@ -59,6 +82,10 @@ class DiscoveryJobService:
         self.retention_hours = retention_hours
         self.retention_max = retention_max
         self.recovery_timeout_seconds = min(recovery_timeout_seconds, 3600)
+        self.lease_seconds = lease_seconds
+        self.retry_budget = retry_budget
+        self.checkpoint_max_bytes = checkpoint_max_bytes
+        self.result_max_bytes = result_max_bytes
         self._submission_times: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
 
@@ -92,6 +119,9 @@ class DiscoveryJobService:
                 progress_percent=0,
                 created_at=created_at,
                 expires_at=created_at + timedelta(hours=self.retention_hours),
+                retry_budget=self.retry_budget,
+                checkpoint_stage="queued",
+                checkpoint_json={"stage": "queued"},
             )
             session.add(job)
             session.commit()
@@ -116,6 +146,10 @@ class DiscoveryJobService:
         self.executor.submit(self._execute, job_id)
         return self.get(tenant_id, job_id, actor=actor)
 
+    @staticmethod
+    def _worker_id() -> str:
+        return f"worker:{threading.current_thread().name}:{uuid.uuid4().hex[:12]}"
+
     def _check_submission_rate(self, tenant_id: str) -> None:
         now = time.monotonic()
         cutoff = now - 60
@@ -126,6 +160,120 @@ class DiscoveryJobService:
             if len(timestamps) >= self.max_jobs_per_minute:
                 raise DiscoveryRateLimitExceeded("Discovery submission rate limit exceeded")
             timestamps.append(now)
+
+    def _acquire_lease(self, job_id: str, worker_id: str) -> tuple[str, str, list[str], str, bool, str]:
+        now = utcnow()
+        lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+        reclaimed = False
+        with self.session_factory() as session:
+            job = session.get(DiscoveryJob, job_id)
+            if job is None or job.status in {"completed", "failed"}:
+                raise DiscoveryLeaseLost("job is no longer runnable")
+            if job.status == "running" and job.lease_expires_at and not self._is_expired(job.lease_expires_at, now):
+                raise DiscoveryLeaseLost("job lease is owned by another worker")
+            reclaimed = job.status == "running" and job.lease_expires_at is not None
+            if reclaimed:
+                job.recovery_count = (job.recovery_count or 0) + 1
+                job.recovered_at = now
+                job.last_error_code = "lease_expired"
+            job.status = "running"
+            job.started_at = job.started_at or now
+            job.lease_owner = worker_id
+            job.lease_expires_at = lease_expires_at
+            job.attempt_count = (job.attempt_count or 0) + 1
+            job.progress_percent = max(job.progress_percent or 0, 10)
+            job.checkpoint_stage = "started"
+            job.checkpoint_json = {
+                "stage": "lease_reclaimed" if reclaimed else "started",
+                "attempt": job.attempt_count,
+            }
+            job.retry_class = "none"
+            job.next_retry_at = None
+            session.commit()
+            if reclaimed:
+                self.audit.record(
+                    "discovery.job_lease_recovered",
+                    {"job_id": job_id, "tenant_id": job.tenant_id, "recovery_count": job.recovery_count},
+                    actor=job.actor,
+                )
+            return (
+                job.tenant_id,
+                job.actor,
+                list(job.targets or []),
+                job.profile,
+                job.dry_run,
+                job.scan_id or self._scan_id(job.id),
+            )
+
+    def _renew_lease(self, job_id: str, worker_id: str) -> bool:
+        now = utcnow()
+        with self.session_factory() as session:
+            statement = (
+                update(DiscoveryJob)
+                .where(
+                    DiscoveryJob.id == job_id,
+                    DiscoveryJob.status == "running",
+                    DiscoveryJob.lease_owner == worker_id,
+                    DiscoveryJob.lease_expires_at.is_not(None),
+                    DiscoveryJob.lease_expires_at > now,
+                )
+                .values(lease_expires_at=now + timedelta(seconds=self.lease_seconds))
+            )
+            updated = session.execute(statement).rowcount or 0
+            if updated:
+                session.commit()
+            return bool(updated)
+
+    def checkpoint(self, job_id: str, worker_id: str, stage: str, metadata: dict[str, object] | None = None) -> bool:
+        if not stage or len(stage) > 64 or any(ord(char) < 32 for char in stage):
+            raise ValueError("checkpoint stage is invalid")
+        payload = self._bounded_checkpoint(stage, metadata or {})
+        with self.session_factory() as session:
+            statement = (
+                update(DiscoveryJob)
+                .where(
+                    DiscoveryJob.id == job_id,
+                    DiscoveryJob.status == "running",
+                    DiscoveryJob.lease_owner == worker_id,
+                    DiscoveryJob.lease_expires_at.is_not(None),
+                    DiscoveryJob.lease_expires_at > utcnow(),
+                )
+                .values(checkpoint_stage=stage, checkpoint_json=payload)
+            )
+            updated = session.execute(statement).rowcount or 0
+            if updated:
+                session.commit()
+            return bool(updated)
+
+    def retry_failed(self, tenant_id: str, job_id: str, *, actor: str = "system") -> DiscoveryJobStatus:
+        """Requeue one tenant-owned transient failure when its bounded budget permits."""
+        now = utcnow()
+        with self.session_factory() as session:
+            job = session.get(DiscoveryJob, job_id)
+            if job is None or job.tenant_id != tenant_id:
+                raise DiscoveryJobNotFound(job_id)
+            if (
+                job.status != "failed"
+                or job.retry_class != "transient"
+                or (job.next_retry_at is not None and not self._is_expired(job.next_retry_at, now))
+                or (job.attempt_count or 0) > (job.retry_budget or 0)
+            ):
+                raise ValueError("job is not eligible for bounded retry")
+            job.status = "queued"
+            job.error = None
+            job.last_error_code = None
+            job.next_retry_at = None
+            attempt_count = job.attempt_count or 0
+            job.checkpoint_stage = "retry_queued"
+            job.checkpoint_json = {"stage": "retry_queued", "attempt": attempt_count}
+            session.commit()
+        self.audit.record(
+            "discovery.job_retry_queued",
+            {"job_id": job_id, "tenant_id": tenant_id, "attempt_count": attempt_count},
+            actor=actor,
+        )
+        self.executor.submit(self._execute, job_id)
+        return self.get(tenant_id, job_id, actor=actor)
 
     def recover_stale_jobs(self, *, tenant_id: str | None = None, actor: str = "system") -> int:
         """Fail bounded stale jobs instead of retrying potentially repeated network actions."""
@@ -153,6 +301,13 @@ class DiscoveryJobService:
                 job.recovery_count = (job.recovery_count or 0) + 1
                 job.recovered_at = recovered_at
                 job.duration_ms = self._duration_ms(job.started_at, recovered_at)
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.retry_class = "permanent"
+                job.next_retry_at = None
+                job.last_error_code = "recovery_timeout"
+                job.checkpoint_stage = "recovered"
+                job.checkpoint_json = {"stage": "recovered", "recovery_count": job.recovery_count}
             if jobs:
                 session.commit()
         if jobs:
@@ -182,28 +337,24 @@ class DiscoveryJobService:
         tenant_id = "unknown"
         actor = "system"
         started_at: datetime | None = None
-        with self.session_factory() as session:
-            job = session.get(DiscoveryJob, job_id)
-            if job is None or job.status in {"completed", "failed", "running"}:
-                return
-            job.status = "running"
-            job.started_at = job.started_at or utcnow()
-            started_at = job.started_at
-            job.progress_percent = 10
-
-            session.commit()
-            tenant_id = job.tenant_id
-            actor = job.actor
-            targets = list(job.targets)
-            profile = job.profile
-            dry_run = job.dry_run
-            scan_id = job.scan_id or self._scan_id(job.id)
-            if job.scan_id is None:
-                job.scan_id = scan_id
-                session.commit()
-
+        worker_id = self._worker_id()
         try:
+            tenant_id, actor, targets, profile, dry_run, scan_id = self._acquire_lease(job_id, worker_id)
+            with self.session_factory() as session:
+                job = session.get(DiscoveryJob, job_id)
+                started_at = job.started_at if job is not None else utcnow()
+                if job is None:
+                    raise DiscoveryLeaseLost("job disappeared after lease acquisition")
+                if job.scan_id is None:
+                    job.scan_id = scan_id
+                    session.commit()
+            if not self.checkpoint(job_id, worker_id, "planned", {"target_count": len(targets)}):
+                raise DiscoveryLeaseLost("job lease lost before execution")
+            if not self._renew_lease(job_id, worker_id):
+                raise DiscoveryLeaseLost("job lease lost before execution")
             result = self.recon_service.run(targets, profile, dry_run, scan_id=scan_id)
+            if not self.checkpoint(job_id, worker_id, "observed", {"asset_count": len(result.assets)}):
+                raise DiscoveryLeaseLost("job lease lost during execution")
             completed_at = utcnow()
             with self.session_factory() as session:
                 scan = session.get(ScanRun, result.scan_id)
@@ -236,12 +387,22 @@ class DiscoveryJobService:
                 job = session.get(DiscoveryJob, job_id)
                 if job is None or job.tenant_id != tenant_id:
                     return
+                if job.lease_owner != worker_id or job.status != "running":
+                    raise DiscoveryLeaseLost("job lease lost before completion")
+                compacted_result, result_bytes = self._compact_result(result)
                 job.status = "completed"
                 job.scan_id = result.scan_id
-                job.result_json = result.model_dump(mode="json")
+                job.result_json = compacted_result
+                job.result_compacted = True
+                job.result_bytes = result_bytes
                 job.progress_percent = 100
                 job.completed_at = completed_at
                 job.duration_ms = self._duration_ms(started_at, completed_at)
+                job.checkpoint_stage = "completed"
+                job.checkpoint_json = {"stage": "completed", "asset_count": len(result.assets)}
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.retry_class = "none"
                 session.commit()
             pruned_count = self._prune(tenant_id)
             if pruned_count:
@@ -262,20 +423,43 @@ class DiscoveryJobService:
                 actor=actor,
             )
         except Exception as exc:  # worker failures are persisted and never escape into the executor
-            safe_error = f"{type(exc).__name__}: discovery worker failed"
+            error_code = self._error_code(exc)
             with self.session_factory() as session:
                 job = session.get(DiscoveryJob, job_id)
-                if job is not None:
-                    job.status = "failed"
-                    job.error = safe_error
-                    job.progress_percent = 100
-                    completed_at = utcnow()
-                    job.completed_at = completed_at
-                    job.duration_ms = self._duration_ms(started_at, completed_at)
-                    session.commit()
+                if job is None or job.tenant_id != tenant_id or job.status != "running" or job.lease_owner != worker_id:
+                    return
+                completed_at = utcnow()
+                attempt_count = job.attempt_count or 1
+                transient = self._is_transient(exc)
+                retry_available = transient and attempt_count <= (job.retry_budget or 0)
+                retry_class = "transient" if retry_available else "permanent"
+                job.status = "failed"
+                job.error = f"{error_code}: discovery worker failed"
+                job.last_error_code = error_code
+                job.retry_class = retry_class
+                job.next_retry_at = (
+                    completed_at + timedelta(seconds=min(3600, 5 * (2 ** min(attempt_count - 1, 9))))
+                    if retry_available
+                    else None
+                )
+                job.progress_percent = 100
+                job.completed_at = completed_at
+                job.duration_ms = self._duration_ms(started_at, completed_at)
+                job.checkpoint_stage = "failed"
+                job.checkpoint_json = {"stage": "failed", "retry_class": retry_class}
+                job.lease_owner = None
+                job.lease_expires_at = None
+                session.commit()
             self.audit.record(
                 "discovery.job_failed",
-                {"job_id": job_id, "tenant_id": tenant_id, "error": safe_error},
+                {
+                    "job_id": job_id,
+                    "tenant_id": tenant_id,
+                    "error_code": error_code,
+                    "retry_class": retry_class,
+                    "retry_available": retry_available,
+                    "attempt_count": attempt_count,
+                },
                 actor=actor,
             )
 
@@ -614,7 +798,82 @@ class DiscoveryJobService:
             completed_at=job.completed_at,
             duration_ms=job.duration_ms,
             recovery_count=job.recovery_count or 0,
+            attempt_count=job.attempt_count or 0,
+            retry_budget=job.retry_budget or 0,
+            retry_class=job.retry_class or "none",
+            next_retry_at=job.next_retry_at,
+            checkpoint_stage=job.checkpoint_stage,
+            result_compacted=bool(job.result_compacted),
+            result_bytes=job.result_bytes,
         )
+
+    @staticmethod
+    def _is_transient(exc: Exception) -> bool:
+        return isinstance(exc, _TRANSIENT_ERROR_TYPES) or type(exc).__name__ in {
+            "TimeoutExpired",
+            "ConnectionResetError",
+        }
+
+    @staticmethod
+    def _error_code(exc: Exception) -> str:
+        if isinstance(exc, TimeoutError) or type(exc).__name__ == "TimeoutExpired":
+            return "timeout"
+        if isinstance(exc, ConnectionError) or type(exc).__name__ == "ConnectionResetError":
+            return "connection_error"
+        if isinstance(exc, ValueError):
+            return "validation_error"
+        if isinstance(exc, DiscoveryLeaseLost):
+            return "lease_lost"
+        return "worker_error"
+
+    def _bounded_checkpoint(self, stage: str, metadata: dict[str, object]) -> dict[str, object]:
+        safe_metadata: dict[str, object] = {}
+        for key, value in metadata.items():
+            if not isinstance(key, str) or not key or len(key) > 64:
+                continue
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                safe_metadata[key] = str(value)[:256] if isinstance(value, str) else value
+        payload: dict[str, object] = {"stage": stage, **safe_metadata}
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return payload if len(encoded) <= self.checkpoint_max_bytes else {"stage": stage, "truncated": True}
+
+    def _compact_result(self, result) -> tuple[dict[str, object], int]:
+        observations = self._merge_observations(result.assets)
+        compact_assets = [
+            {
+                "ip": observation.ip,
+                "hostname": (observation.hostname or "")[:255] or None,
+                "ports": sorted(set(observation.ports))[:64],
+                "services": sorted(set(observation.services))[:32],
+                "source": (observation.source or "recon")[:128],
+            }
+            for observation in observations[:64]
+        ]
+        summary: dict[str, object] = {
+            "scan_id": result.scan_id,
+            "dry_run": result.dry_run,
+            "target_count": len(result.targets),
+            "asset_count": len(observations),
+            "assets": compact_assets,
+            "warnings": [str(warning)[:256] for warning in result.warnings[:20]],
+            "commands_omitted": True,
+        }
+        encoded = json.dumps(summary, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > self.result_max_bytes:
+            summary.pop("assets", None)
+            summary["assets_truncated"] = True
+            encoded = json.dumps(summary, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > self.result_max_bytes:
+            summary = {
+                "scan_id": result.scan_id,
+                "dry_run": result.dry_run,
+                "target_count": len(result.targets),
+                "asset_count": len(observations),
+                "assets_truncated": True,
+                "commands_omitted": True,
+            }
+            encoded = json.dumps(summary, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return summary, len(encoded)
 
     @staticmethod
     def _duration_ms(started_at: datetime | None, completed_at: datetime | None) -> int | None:

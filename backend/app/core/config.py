@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     discovery_job_retention_hours: int = 24
     discovery_job_retention_max: int = 500
     discovery_recovery_timeout_seconds: int = 300
+    discovery_lease_seconds: int = 60
+    discovery_retry_budget: int = 2
+    discovery_checkpoint_max_bytes: int = 2048
+    discovery_result_max_bytes: int = 8192
     discovery_api_token: str = ""
     discovery_tenant_id: str = "lab"
     audit_log_path: str = "./data/audit.jsonl"

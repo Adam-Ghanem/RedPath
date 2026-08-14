@@ -330,6 +330,7 @@ def test_stale_recovery_fails_inflight_job_without_retrying_scan(tmp_path: Path)
         assert recovered.error == "RecoveryTimeout: worker exceeded bounded recovery window"
         assert recovered.recovery_count == 1
         assert recovered.duration_ms is not None
+        assert "discovery.jobs_recovered" in (tmp_path / "recovery-audit.jsonl").read_text()
         with session_factory() as session:
             assert session.query(ScanRun).count() == 0
             assert session.query(Asset).count() == 0

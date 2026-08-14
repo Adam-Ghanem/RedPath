@@ -36,6 +36,13 @@ class DiscoveryJobStatus(BaseModel):
     completed_at: datetime | None = None
     duration_ms: int | None = Field(default=None, ge=0)
     recovery_count: int = Field(default=0, ge=0)
+    attempt_count: int = Field(default=0, ge=0)
+    retry_budget: int = Field(default=2, ge=0, le=5)
+    retry_class: Literal["none", "transient", "permanent"] = "none"
+    next_retry_at: datetime | None = None
+    checkpoint_stage: str | None = Field(default=None, max_length=64)
+    result_compacted: bool = False
+    result_bytes: int | None = Field(default=None, ge=0, le=65536)
 
 
 class AssetProvenance(BaseModel):

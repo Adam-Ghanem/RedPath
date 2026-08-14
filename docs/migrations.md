@@ -16,6 +16,8 @@ pytest -q backend/tests/test_migrations.py
 
 The validator checks filename discipline, additive DDL, absence of destructive statements, required tenant columns, legacy-tenant backfill, schema-version idempotence, and the existence of this rollback procedure. The SQL artifact set is intentionally validated even when a deployment uses Alembic so that the prototype compatibility path cannot silently diverge.
 
+The inventory reliability revision `c14f9b72d6e1` is Alembic-only and follows `22d614b2aac8`. It adds tenant-scoped lease, checkpoint, retry-budget, result-compaction, and composite-index state. Apply it with `alembic upgrade head` only after workers are quiesced or the deployment can tolerate additive fields appearing during rollout. The downgrade function removes only the state and indexes introduced by this revision after a reviewed maintenance window; production rollback should follow the application-revert, snapshot, or compensating-migration procedure below rather than an ad hoc database command.
+
 ## Rollback
 
 Rollback is a deployment decision, not an automatic destructive SQL operation. If an additive migration causes an application regression, stop the affected rollout, keep the new columns or tables intact, and revert the application to the last compatible commit when the old application can safely ignore the additive schema. Restore the approved database snapshot only when data integrity or operational recovery requires it and the restore has been reviewed for tenant and audit consequences.
@@ -33,4 +35,4 @@ PYTHONPATH=backend python ci/check_migrations.py
 pytest -q backend/tests/test_migrations.py backend/tests/test_kernel_contracts.py
 ```
 
-This platform contract change does not add or alter a database table, column, index, or migration artifact. Its migration contribution is the validation and rollback backbone above, together with compatibility tests for versioned contracts and bounded cursors. Future persistence changes must add their own additive migration and update the migration tests before merge.
+Reliability changes that add or alter a database table, column, or index must include an Alembic revision, downgrade function, migration-contract test coverage, and a documented maintenance-window rollback. The inventory reliability revision is validated by the same migration and application gates above; no legacy SQL migration artifact is added.

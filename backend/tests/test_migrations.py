@@ -14,6 +14,31 @@ def test_discovery_job_observability_columns_are_additive(tmp_path: Path) -> Non
     assert {"duration_ms", "recovery_count", "recovered_at"}.issubset(columns)
 
 
+def test_phase4_reliability_columns_and_indexes_are_present(tmp_path: Path) -> None:
+    database_path = tmp_path / "phase4-reliability.db"
+    session_factory = create_session_factory(f"sqlite:///{database_path}")
+    with session_factory() as session:
+        bind = session.get_bind()
+        discovery_columns = {column["name"] for column in inspect(bind).get_columns("discovery_jobs")}
+        discovery_indexes = {index["name"] for index in inspect(bind).get_indexes("discovery_jobs")}
+        asset_indexes = {index["name"] for index in inspect(bind).get_indexes("assets")}
+    assert {
+        "lease_owner",
+        "lease_expires_at",
+        "attempt_count",
+        "retry_budget",
+        "retry_class",
+        "next_retry_at",
+        "checkpoint_stage",
+        "checkpoint_json",
+        "result_compacted",
+        "result_bytes",
+        "last_error_code",
+    }.issubset(discovery_columns)
+    assert "ix_discovery_jobs_tenant_status_lease" in discovery_indexes
+    assert {"ix_assets_tenant_ip", "ix_assets_tenant_last_seen"}.issubset(asset_indexes)
+
+
 def test_additive_migration_backfills_legacy_tenant(tmp_path: Path) -> None:
     database_path = tmp_path / "legacy.db"
     engine = create_engine(f"sqlite:///{database_path}")
