@@ -37,10 +37,32 @@ All sensitive connector credentials remain deployment secrets and are never pers
 
 ## Migration and rollback
 
-Apply `backend/migrations/003_telemetry_resilience.sql` after the existing telemetry migrations. The migration is additive and creates `telemetry_ingestion_state` and `telemetry_dead_letters` with tenant/source and expiration indexes. The application migration runner records schema version 5 when both tables exist.
+Apply Alembic revision `6f4a2b8c9d10` after head `22d614b2aac8`. The revision additively extends `telemetry_ingestion_state` with source circuit, capacity-window, and last-attempt fields.
 
-Rollback is application-safe: deploying the previous application version leaves these additive tables in place and ignores them. Do not drop the tables during a routine rollback because they contain operational recovery history. If removal is required by a separately approved data-retention process, export only approved aggregate audit information first, then remove the tables in a maintenance window; no remote Wazuh operation is part of rollback.
+Rollback is application-safe: downgrading to `22d614b2aac8` removes only those operational columns and leaves canonical telemetry, dead-letter metadata, and prior checkpoint tables intact. Do not drop the tables during a routine rollback because they contain operational recovery history. No remote Wazuh operation is part of migration or rollback.
 
 ## Integration boundary
 
 The worker owns checkpoint advancement, retry scheduling, and retention-hook invocation. API routes expose authenticated, tenant-scoped health diagnostics and existing read-only telemetry workflows. Server-derived principal identity, RBAC, audit integrity, redaction, and dry-run controls remain authoritative. No endpoint accepts a tenant override, arbitrary connector URL, raw query JSON, or remote mutation request.
+
+## Multi-source operational resilience
+
+Recovery state is isolated by the authenticated tenant and a bounded source identifier. A source circuit opens after the configured consecutive-failure threshold, rejects additional work during the cooldown, and permits one half-open recovery attempt after the cooldown. A successful local run closes only that source circuit; it does not affect another source or tenant.
+
+Each source has a rolling event and estimated-byte capacity window. Requests that exceed the remaining local budget fail closed before any connector call. The default limits are 1,000 estimated events and 4,000,000 estimated bytes per 60-second window. These are admission-control estimates, not measurements of remote data, and they never cause a remote source mutation.
+
+## Freshness SLO and correlation fan-in
+
+Health diagnostics report lag seconds, a configured freshness target, and whether the latest observed event meets that target. Historical fixture timestamps may report an SLO miss while the connector remains operationally healthy; explicit source failures, open circuits, or schema drift are the safe-failure conditions that mark the source degraded. Freshness breaches are counted through fixed-name metrics without tenant or source labels.
+
+Detection correlation is bounded to 500 normalized events by default, even when a caller requests a larger read window. The response declares the effective fan-in limit and whether truncation occurred. This prevents a single tenant query from consuming unbounded evaluator memory or CPU. Case evidence remains a minimum safe projection and never includes raw provider payloads.
+
+## Schema-drift remediation
+
+When a required provider object is missing or has an incompatible shape, ingestion fails closed before normalization and stores only a bounded schema signature and safe error code. The health response exposes the remediation guidance `review_provider_schema_contract`. Operators should compare the provider mapping to the expected version, update the adapter’s allow-list in a reviewed change, replay a sanitized fixture, and only then resume the affected source. No raw provider document is retained as part of drift handling.
+
+## Migration and downgrade
+
+The Alembic revision `6f4a2b8c9d10` adds circuit, capacity-window, and last-attempt columns to `telemetry_ingestion_state`. Its downgrade removes only those operational columns. It does not drop canonical telemetry events, dead-letter records, or the existing checkpoint tables. A rollback therefore preserves evidence and recovery history while older application code ignores the additional columns. Apply and downgrade only through the repository’s Alembic chain.
+
+Replay-safe fixture tests cover source isolation, circuit cooldown, capacity rejection, freshness SLO calculation, bounded fan-in, schema-drift guidance, and upgrade/downgrade behavior. The fixtures do not contact live SIEM infrastructure and no connector exposes write-capable operations.

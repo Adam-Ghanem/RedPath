@@ -97,6 +97,8 @@ class TelemetryDetectionResponse(BaseModel):
     event_count: int = Field(ge=0)
     event_ids: list[str] = Field(default_factory=list, max_length=1000)
     evaluation: dict[str, Any]
+    fan_in_limit: int = Field(default=500, ge=1, le=1000)
+    fan_in_truncated: bool = False
 
 
 class TelemetryEvidenceProjection(BaseModel):
@@ -136,6 +138,14 @@ class TelemetryHealthResponse(BaseModel):
     consecutive_failures: int = Field(default=0, ge=0)
     dead_letter_count: int = Field(default=0, ge=0)
     last_error_code: str | None = Field(default=None, max_length=64)
+    circuit_state: Literal["closed", "open", "half_open"] = "closed"
+    circuit_open_until: datetime | None = None
+    capacity_window_started_at: datetime | None = None
+    capacity_events_remaining: int = Field(default=0, ge=0)
+    capacity_bytes_remaining: int = Field(default=0, ge=0)
+    freshness_slo_target_seconds: int = Field(default=900, ge=1)
+    freshness_slo_met: bool | None = None
+    schema_drift_guidance: str | None = Field(default=None, max_length=128)
 
 
 class WazuhDocument(BaseModel):

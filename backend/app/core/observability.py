@@ -25,6 +25,10 @@ _TELEMETRY_COUNTER_NAMES = frozenset(
         "correlation_matches_total",
         "checkpoint_recoveries_total",
         "retention_pruned_total",
+        "circuit_open_total",
+        "capacity_rejections_total",
+        "freshness_slo_breaches_total",
+        "fan_in_truncations_total",
     }
 )
 _TELEMETRY_GAUGE_NAMES = frozenset({"lag_seconds", "consecutive_failures", "dead_letter_count"})

@@ -21,6 +21,7 @@ from app.services.detection_framework import DetectionRuleCatalog
 from app.services.telemetry_resilience import TelemetryResilienceStore
 
 MAX_CORRELATION_WINDOW_HOURS = 24
+MAX_CORRELATION_FAN_IN = 500
 
 
 def validate_window(
@@ -71,20 +72,27 @@ def evaluate_telemetry(
     request: TelemetryDetectionRequest,
     catalog: DetectionRuleCatalog,
     metrics: MetricsRegistry | None = None,
+    max_fan_in: int = MAX_CORRELATION_FAN_IN,
 ) -> TelemetryDetectionResponse:
     start, end = validate_window(request.start, request.end)
+    if max_fan_in < 1 or max_fan_in > 1000:
+        raise ValueError("telemetry correlation fan-in is outside the safe range")
+    fan_in_limit = min(request.limit, max_fan_in)
     events = load_telemetry(
         session_factory,
         tenant_id=tenant_id,
         start=start,
         end=end,
-        limit=request.limit,
+        limit=fan_in_limit,
     )
+    fan_in_truncated = request.limit > MAX_CORRELATION_FAN_IN
     alerts = [_event_to_alert(event) for event in events]
     evaluation = catalog.evaluate(alerts, request.rule_ids)
     if metrics:
         metrics.increment_telemetry("correlation_evaluations_total")
         metrics.increment_telemetry("correlation_matches_total", len(evaluation.matches))
+        if fan_in_truncated:
+            metrics.increment_telemetry("fan_in_truncations_total")
     return TelemetryDetectionResponse(
         tenant_id=tenant_id,
         start=start,
@@ -92,6 +100,8 @@ def evaluate_telemetry(
         event_count=len(events),
         event_ids=[event.event_id for event in events],
         evaluation=evaluation.model_dump(mode="json"),
+        fan_in_limit=fan_in_limit,
+        fan_in_truncated=fan_in_truncated,
     )
 
 
@@ -169,6 +179,16 @@ def health_diagnostics(
         consecutive_failures=resilience_health.consecutive_failures if resilience_health else 0,
         dead_letter_count=resilience_health.dead_letter_count if resilience_health else 0,
         last_error_code=resilience_health.last_error_code if resilience_health else None,
+        circuit_state=resilience_health.circuit_state if resilience_health else "closed",
+        circuit_open_until=resilience_health.circuit_open_until if resilience_health else None,
+        capacity_window_started_at=(resilience_health.capacity_window_started_at if resilience_health else None),
+        capacity_events_remaining=(resilience_health.capacity_events_remaining if resilience_health else 0),
+        capacity_bytes_remaining=(resilience_health.capacity_bytes_remaining if resilience_health else 0),
+        freshness_slo_target_seconds=(
+            resilience_health.freshness_slo_target_seconds if resilience_health else lag_warning_seconds
+        ),
+        freshness_slo_met=resilience_health.freshness_slo_met if resilience_health else None,
+        schema_drift_guidance=resilience_health.schema_drift_guidance if resilience_health else None,
     )
 
 

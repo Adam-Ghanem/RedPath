@@ -68,8 +68,15 @@ Repeated ingestion of the same tenant/event identity is idempotent. The response
 | `WAZUH_VERIFY_TLS` | `true` | Keep enabled outside a deliberately isolated local fixture |
 | `SIEM_MAX_QUERY_WINDOW_HOURS` | `24` | Maximum query window |
 | `SIEM_REQUEST_TIMEOUT_SECONDS` | `20` | HTTP client timeout, bounded to 1–120 seconds |
+| `SIEM_CIRCUIT_FAILURE_THRESHOLD` | `3` | Consecutive source failures before local circuit open |
+| `SIEM_CIRCUIT_COOLDOWN_SECONDS` | `300` | Local cooldown before one half-open recovery attempt |
+| `SIEM_CAPACITY_WINDOW_SECONDS` | `60` | Local ingestion budget window |
+| `SIEM_CAPACITY_MAX_EVENTS` | `1000` | Maximum estimated events admitted per source window |
+| `SIEM_CAPACITY_MAX_BYTES` | `4000000` | Maximum estimated bytes admitted per source window |
+| `SIEM_FRESHNESS_SLO_TARGET_SECONDS` | `900` | Freshness diagnostic target |
+| `SIEM_CORRELATION_MAX_FAN_IN` | `500` | Maximum normalized events evaluated per correlation request |
 
-Apply `backend/migrations/001_siem_telemetry.sql` in environments that use an external migration process. Fresh prototype databases continue to use the existing SQLAlchemy metadata creation path, and the model definitions match the migration schema.
+Apply the ordered Alembic migration chain through the current head in deployment environments. Fresh and upgraded databases use the same Alembic path; do not run legacy raw SQL migration artifacts.
 
 ## Integration points and limitations
 

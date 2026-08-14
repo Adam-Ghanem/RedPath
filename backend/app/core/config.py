@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     siem_dead_letter_retention_max: int = 1000
     siem_lag_warning_seconds: int = 900
     siem_schema_version: str = "wazuh-alert-v1"
+    siem_circuit_failure_threshold: int = 3
+    siem_circuit_cooldown_seconds: int = 300
+    siem_capacity_window_seconds: int = 60
+    siem_capacity_max_events: int = 1000
+    siem_capacity_max_bytes: int = 4_000_000
+    siem_freshness_slo_target_seconds: int = 900
+    siem_correlation_max_fan_in: int = 500
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

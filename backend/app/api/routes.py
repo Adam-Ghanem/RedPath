@@ -635,6 +635,12 @@ def build_router(
         dead_letter_max_metadata_bytes=settings.siem_dead_letter_metadata_max_bytes,
         lag_warning_seconds=settings.siem_lag_warning_seconds,
         retention_max_dead_letters=settings.siem_dead_letter_retention_max,
+        circuit_failure_threshold=settings.siem_circuit_failure_threshold,
+        circuit_cooldown_seconds=settings.siem_circuit_cooldown_seconds,
+        capacity_window_seconds=settings.siem_capacity_window_seconds,
+        capacity_max_events=settings.siem_capacity_max_events,
+        capacity_max_bytes=settings.siem_capacity_max_bytes,
+        freshness_slo_target_seconds=settings.siem_freshness_slo_target_seconds,
     )
     siem_client = WazuhIndexerClient(
         settings.wazuh_indexer_url,
@@ -652,6 +658,7 @@ def build_router(
         max_query_window_hours=settings.siem_max_query_window_hours,
         resilience=telemetry_resilience,
         metrics=metrics,
+        source="wazuh",
     )
     detection_catalog = DetectionRuleCatalog()
     detection_lifecycle = DetectionLifecycleService(detection_catalog)
@@ -757,6 +764,7 @@ def build_router(
                 request=request,
                 catalog=detection_catalog,
                 metrics=metrics,
+                max_fan_in=settings.siem_correlation_max_fan_in,
             )
         except (KeyError, ValueError) as exc:
             status_code = 404 if isinstance(exc, KeyError) else 422

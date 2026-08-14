@@ -534,6 +534,12 @@ class TelemetryIngestionState(Base):
     last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    circuit_state: Mapped[str] = mapped_column(String(16), default="closed")
+    circuit_open_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    capacity_window_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    capacity_events_reserved: Mapped[int] = mapped_column(Integer, default=0)
+    capacity_bytes_reserved: Mapped[int] = mapped_column(Integer, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TelemetryDeadLetter(Base):

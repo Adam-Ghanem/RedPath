@@ -176,12 +176,14 @@ class SiemIngestionService:
         max_query_window_hours: int = 24,
         resilience: TelemetryResilienceStore | None = None,
         metrics: MetricsRegistry | None = None,
+        source: str = "wazuh",
     ) -> None:
         self.client = client
         self.session_factory = session_factory
         self.max_query_window_hours = max_query_window_hours
         self.resilience = resilience
         self.metrics = metrics
+        self.source = source
 
     async def ingest(self, query: TelemetryQuery) -> TelemetryIngestionResponse:
         if self.metrics:
@@ -193,7 +195,16 @@ class SiemIngestionService:
         window_hours = (end - start).total_seconds() / 3600
         if window_hours > self.max_query_window_hours:
             raise ValueError(f"telemetry query window cannot exceed {self.max_query_window_hours} hours")
-        checkpoint_cursor = self.resilience.get_checkpoint(query.tenant_id) if self.resilience else None
+        if self.resilience and not self.resilience.try_start(
+            tenant_id=query.tenant_id,
+            source=self.source,
+            requested_events=query.limit,
+            requested_bytes=query.limit * 4096,
+        ):
+            raise ValueError("telemetry source capacity or circuit budget is unavailable")
+        checkpoint_cursor = (
+            self.resilience.get_checkpoint(query.tenant_id, source=self.source) if self.resilience else None
+        )
         try:
             next_cursor = checkpoint_cursor
             page_method = getattr(self.client, "search_alerts_page", None)
@@ -222,6 +233,7 @@ class SiemIngestionService:
                         tenant_id=query.tenant_id,
                         error_code="schema_drift",
                         checkpoint_cursor=checkpoint_cursor,
+                        source=self.source,
                         schema_version=drift.schema_version,
                         schema_signature=drift.signature,
                     )
@@ -234,6 +246,7 @@ class SiemIngestionService:
                     tenant_id=query.tenant_id,
                     error_code=code,
                     checkpoint_cursor=checkpoint_cursor,
+                    source=self.source,
                 )
             raise
         except Exception:
@@ -242,6 +255,7 @@ class SiemIngestionService:
                     tenant_id=query.tenant_id,
                     error_code="connector_error",
                     checkpoint_cursor=checkpoint_cursor,
+                    source=self.source,
                 )
             raise
         run_id = str(uuid4())
@@ -296,6 +310,7 @@ class SiemIngestionService:
                     tenant_id=query.tenant_id,
                     error_code="persistence_error",
                     checkpoint_cursor=checkpoint_cursor,
+                    source=self.source,
                 )
             raise
         if self.resilience:
@@ -305,6 +320,7 @@ class SiemIngestionService:
                 checkpoint_cursor=next_cursor,
                 schema_version=EXPECTED_SCHEMA_VERSION,
                 last_event_at=last_event_at,
+                source=self.source,
             )
         return TelemetryIngestionResponse(
             run_id=run_id,
