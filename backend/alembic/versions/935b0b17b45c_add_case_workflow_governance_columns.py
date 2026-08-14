@@ -4,8 +4,8 @@ Revision ID: 935b0b17b45c
 Revises: 3c5e973700b9
 Create Date: 2026-08-14 02:22:45.164460
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = '935b0b17b45c'
 down_revision = '3c5e973700b9'
@@ -21,7 +21,9 @@ def upgrade() -> None:
     evidence_columns = {column["name"] for column in inspector.get_columns("evidence_items")}
     with op.batch_alter_table("evidence_items") as batch:
         if "custody_status" not in evidence_columns:
-            batch.add_column(sa.Column("custody_status", sa.String(length=32), nullable=False, server_default="unverified"))
+            batch.add_column(
+                sa.Column("custody_status", sa.String(length=32), nullable=False, server_default="unverified")
+            )
         if "custody_verified_by" not in evidence_columns:
             batch.add_column(sa.Column("custody_verified_by", sa.String(length=128), nullable=True))
         if "custody_verified_at" not in evidence_columns:
@@ -36,7 +38,9 @@ def upgrade() -> None:
         if "assigned_to" not in remediation_columns:
             batch.add_column(sa.Column("assigned_to", sa.String(length=128), nullable=True))
         if "verification_status" not in remediation_columns:
-            batch.add_column(sa.Column("verification_status", sa.String(length=32), nullable=False, server_default="unverified"))
+            batch.add_column(
+                sa.Column("verification_status", sa.String(length=32), nullable=False, server_default="unverified")
+            )
         if "verified_by" not in remediation_columns:
             batch.add_column(sa.Column("verified_by", sa.String(length=128), nullable=True))
         if "verified_at" not in remediation_columns:
@@ -49,7 +53,9 @@ def upgrade() -> None:
     acceptance_columns = {column["name"] for column in inspector.get_columns("risk_acceptances")}
     with op.batch_alter_table("risk_acceptances") as batch:
         if "approval_status" not in acceptance_columns:
-            batch.add_column(sa.Column("approval_status", sa.String(length=32), nullable=False, server_default="approved"))
+            batch.add_column(
+                sa.Column("approval_status", sa.String(length=32), nullable=False, server_default="approved")
+            )
         if "approved_by" not in acceptance_columns:
             batch.add_column(sa.Column("approved_by", sa.String(length=128), nullable=True))
         if "approved_at" not in acceptance_columns:

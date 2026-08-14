@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.core.auth import IdentityProviderUnavailable, MfaStepUpPolicy, OIDCAuthenticationProvider
 from app.core.config import Settings
 from app.core.request_context import Principal
@@ -169,7 +171,8 @@ def test_enterprise_identity_revision_is_applied_by_alembic(tmp_path: Path) -> N
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         session_columns = {column["name"] for column in inspect(engine).get_columns("auth_sessions")}
-    assert version == "565df19a3ca6"
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    assert version == ScriptDirectory.from_config(config).get_current_head()
     assert "mfa_verified_until" in session_columns
 
 

@@ -4,8 +4,8 @@ Revision ID: 565df19a3ca6
 Revises: 8f4c1d2a7b90
 Create Date: 2026-08-14 02:12:27.334658
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = '565df19a3ca6'
 down_revision = '8f4c1d2a7b90'
@@ -56,7 +56,11 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("token_hash"),
         )
-        op.create_index("ix_service_account_tokens_service_account_id", "service_account_tokens", ["service_account_id"])
+        op.create_index(
+            "ix_service_account_tokens_service_account_id",
+            "service_account_tokens",
+            ["service_account_id"],
+        )
         op.create_index("ix_service_account_tokens_tenant_id", "service_account_tokens", ["tenant_id"])
         op.create_index("ix_service_account_tokens_token_hash", "service_account_tokens", ["token_hash"])
         op.create_index("ix_service_account_tokens_expires_at", "service_account_tokens", ["expires_at"])
