@@ -1,0 +1,10 @@
+=== BASELINE REPOSITORY ===
+## [32mfeat/ai-enterprise-controls[m...[31morigin/feat/ai-enterprise-controls[m
+[31m??[m .artifacts/
+[33m73ce2b7[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeat/ai-enterprise-controls[m[33m, [m[1;31morigin/feat/ai-enterprise-controls[m[33m)[m feat: add enterprise AI providers and oversight controls
+[33m3d110e9[m[33m ([m[1;31morigin/feat/ai-risk-copilot[m[33m, [m[1;32mfeat/ai-risk-copilot[m[33m)[m feat: add grounded AI risk and SOC copilot features
+[33m6ed5324[m[33m ([m[1;31morigin/redpath/phase3-single-migrations[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m refactor: make Alembic the sole migration system
+[33m7fee8d7[m[33m ([m[1;31morigin/integration/phase-2[m[33m)[m fix: reconcile phase two release contracts
+[33mc8d03e3[m fix: complete protected pcap evidence contract
+=== PROGRESS FILE ===
+PROGRESS.md ABSENT

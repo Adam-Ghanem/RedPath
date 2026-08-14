@@ -10,7 +10,10 @@ from app.kernel.contracts import (
     IntegrationContext,
     IntegrationPlan,
     ModuleKind,
+    NormalizedObservation,
+    PlannedAction,
 )
+from app.schemas.contracts import FindingInput
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,7 @@ class PluginManifest:
             raise ValueError("plugin capabilities must not be empty")
         if not self.supported_contract_versions:
             raise ValueError("plugin must support at least one contract version")
+
     def negotiated_capabilities(self) -> tuple[CapabilityDescriptor, ...]:
         """Return explicit descriptors or safe descriptors derived from metadata."""
 
@@ -68,3 +72,65 @@ class RedPathPlugin(Protocol):
     def analyze(self, context: IntegrationContext, observations: list[dict]) -> IntegrationAnalysis:
         """Analyze normalized observation payloads and return typed findings."""
         ...
+
+
+class DetectionPlugin(RedPathPlugin, Protocol):
+    """Typed detection contract for read-only observation-to-finding plugins."""
+
+    def detect(
+        self,
+        context: IntegrationContext,
+        observations: list[NormalizedObservation],
+    ) -> list[FindingInput]:
+        """Evaluate normalized observations without executing external actions."""
+        ...
+
+
+class DetectionPluginBase:
+    """Safe adapter that enforces the common detection plugin lifecycle."""
+
+    manifest: PluginManifest
+
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        manifest = getattr(cls, "manifest", None)
+        if manifest is not None and manifest.module_kind != ModuleKind.DETECTION:
+            raise TypeError("DetectionPluginBase requires a detection manifest")
+
+    def plan(self, context: IntegrationContext) -> IntegrationPlan:
+        return IntegrationPlan(
+            plugin_id=self.manifest.plugin_id,
+            plugin_version=self.manifest.version,
+            request_id=context.request_id,
+            dry_run=context.dry_run,
+            actions=[
+                PlannedAction(
+                    action_id=f"{self.manifest.plugin_id}:analyze",
+                    operation="analyze",
+                    description=f"Analyze normalized observations with {self.manifest.name}.",
+                    targets=context.targets,
+                    required_permissions=self.manifest.required_scopes,
+                    read_only=True,
+                    dry_run=True,
+                )
+            ],
+            warnings=["Detection plugins analyze supplied observations only; no external work is executed."],
+        )
+
+    def analyze(self, context: IntegrationContext, observations: list[dict]) -> IntegrationAnalysis:
+        normalized = [NormalizedObservation.model_validate(item) for item in observations[:256]]
+        findings = self.detect(context, normalized)[:256]
+        return IntegrationAnalysis(
+            plugin_id=self.manifest.plugin_id,
+            plugin_version=self.manifest.version,
+            request_id=context.request_id,
+            findings=findings,
+            observation_count=len(normalized),
+        )
+
+    def detect(
+        self,
+        context: IntegrationContext,
+        observations: list[NormalizedObservation],
+    ) -> list[FindingInput]:
+        raise NotImplementedError

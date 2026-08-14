@@ -22,7 +22,7 @@ The shared `Asset` contract remains under `backend/app/models/domain.py`. It is 
 
 ## Plugin registry
 
-A plugin exposes a `PluginManifest`, `plan(context)`, and `analyze(context, observations)`. Manifests declare a stable lower-case identifier, version, capabilities, ATT&CK technique IDs, required permission scopes, dry-run support, and read-only status. `PluginRegistry` validates identifiers, rejects duplicate registrations, rejects empty capabilities, and rejects any manifest that is not read-only.
+A plugin exposes a `PluginManifest`, `plan(context)`, and `analyze(context, observations)`. Detection plugins should extend `DetectionPluginBase` and implement `detect(context, normalized_observations)` to return validated `FindingInput` records. Manifests declare a stable lower-case identifier, version, capabilities, ATT&CK technique IDs, required permission scopes, dry-run support, and read-only status. `PluginRegistry` validates identifiers, rejects duplicate registrations, rejects empty capabilities, and rejects any manifest that is not read-only.
 
 The default registry currently exposes the following adapters.
 
@@ -31,8 +31,9 @@ The default registry currently exposes the following adapters.
 | `recon.safe_inventory` | Safe asset/service inventory planning | `asset.read` | Read-only; dry-run supported |
 | `ad.observation_analyzer` | AD observation analysis | `evidence.read` | Read-only; dry-run supported |
 | `purple.wazuh_gap_report` | Wazuh detection-gap analysis | `telemetry.read` | Read-only; dry-run supported |
+| `detection.safe_observation_rules` | Concrete normalized-observation detection rules | `evidence.read` | Read-only; dry-run supported; emits validated findings |
 
-The default adapters are deliberately conservative placeholders. They produce a typed plan or bounded analysis result and emit a warning when a domain-specific executor or analyzer has not yet been registered. Future modules should register an implementation rather than adding domain logic to the kernel.
+The generic recon, AD, and Wazuh entries remain conservative registry adapters. The `detection.safe_observation_rules` entry is a concrete deterministic example in `backend/app/plugins/example_detection.py`: it bounds rule metadata, requires a rule and technique identifier, excludes raw event payloads, and returns `FindingInput` findings. Optional distribution plugins can be discovered only through the explicit `redpath.detection` entry-point group and an operator-provided allow-list; unlisted entry points are not loaded. See [`PLUGIN_DEVELOPMENT.md`](PLUGIN_DEVELOPMENT.md) for the contributor contract and required tests.
 
 ## Kernel lifecycle
 

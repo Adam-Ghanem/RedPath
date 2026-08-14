@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from importlib import metadata
+from typing import Any, Iterable
 
 from app.kernel.contracts import (
     SCHEMA_VERSION,
@@ -21,6 +22,7 @@ from app.kernel.contracts import (
     PluginCatalogPage,
 )
 from app.plugins.base import PluginManifest, RedPathPlugin
+from app.plugins.example_detection import EXAMPLE_DETECTION_PLUGIN
 
 _PLUGIN_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,63}$")
 
@@ -130,6 +132,37 @@ class PluginRegistry:
         if manifest.plugin_id in self._plugins:
             raise ValueError(f"plugin already registered: {manifest.plugin_id}")
         self._plugins[manifest.plugin_id] = plugin
+
+    def discover(
+        self,
+        *,
+        allowed_plugin_ids: Iterable[str],
+        group: str = "redpath.detection",
+        entry_points: Iterable[Any] | None = None,
+    ) -> tuple[str, ...]:
+        """Load only explicitly allow-listed entry points into this registry.
+
+        Discovery is opt-in and never imports an unlisted distribution entry point.
+        Loaded objects must expose a valid read-only plugin manifest and are
+        registered through the same validation path as built-ins.
+        """
+
+        allowed = frozenset(allowed_plugin_ids)
+        candidates = entry_points
+        if candidates is None:
+            candidates = metadata.entry_points().select(group=group)
+        discovered: list[str] = []
+        for entry_point in sorted(candidates, key=lambda item: str(getattr(item, "name", ""))):
+            plugin_id = str(getattr(entry_point, "name", ""))
+            if plugin_id not in allowed:
+                continue
+            loaded = entry_point.load()
+            plugin = loaded() if isinstance(loaded, type) else loaded
+            if plugin.manifest.plugin_id != plugin_id:
+                raise ValueError("entry-point name must match plugin manifest ID")
+            self.register(plugin)
+            discovered.append(plugin.manifest.plugin_id)
+        return tuple(discovered)
 
     def get(self, plugin_id: str) -> RedPathPlugin:
         try:
@@ -241,7 +274,9 @@ class PluginRegistry:
         )
 
 
-DEFAULT_REGISTRY = PluginRegistry(RegistryPlugin(manifest) for manifest in BUILTIN_PLUGINS)
+DEFAULT_REGISTRY = PluginRegistry(
+    [RegistryPlugin(manifest) for manifest in BUILTIN_PLUGINS] + [EXAMPLE_DETECTION_PLUGIN]
+)
 
 
 def list_plugins() -> list[dict[str, object]]:

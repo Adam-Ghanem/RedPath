@@ -1,0 +1,127 @@
+
+=== backend_pytest ===
+........................................................................ [ 69%]
+................................                                         [100%]
+=============================== warnings summary ===============================
+../../../../usr/local/lib/python3.12/dist-packages/fpdf/__init__.py:43
+  /usr/local/lib/python3.12/dist-packages/fpdf/__init__.py:43: UserWarning: You have both PyFPDF & fpdf2 installed. Both packages cannot be installed at the same time as they share the same module namespace. To only keep fpdf2, run: pip uninstall --yes pypdf && pip install --upgrade fpdf2
+    warnings.warn(
+
+../../../../usr/local/lib/python3.12/dist-packages/fastapi/testclient.py:1
+  /usr/local/lib/python3.12/dist-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+../../../../usr/local/lib/python3.12/dist-packages/sqlalchemy/engine/default.py:942: 5 warnings
+backend/tests/test_ai_features.py: 2 warnings
+backend/tests/test_attack_path_risk.py: 2 warnings
+backend/tests/test_detection_phase2.py: 2 warnings
+backend/tests/test_discovery_jobs.py: 5 warnings
+backend/tests/test_migrations.py: 1 warning
+backend/tests/test_pcap.py: 2 warnings
+backend/tests/test_phase2_security.py: 4 warnings
+backend/tests/test_siem_ingestion.py: 4 warnings
+  /usr/local/lib/python3.12/dist-packages/sqlalchemy/engine/default.py:942: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+104 passed, 29 warnings in 28.93s
+EXIT_CODE[backend_pytest]=0
+
+=== backend_ruff ===
+All checks passed!
+EXIT_CODE[backend_ruff]=0
+
+=== backend_bandit ===
+[manager]	WARNING	Test in comment: execution is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: is is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: limited is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: to is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: validated is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: allow is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: listed is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: discovery is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: commands is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: argv is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: is is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: built is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: after is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: scope is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: validation is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: shell is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: is is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: never is not a test name or id, ignoring
+[manager]	WARNING	Test in comment: used is not a test name or id, ignoring
+EXIT_CODE[backend_bandit]=0
+
+=== backend_pip_audit ===
+No known vulnerabilities found
+EXIT_CODE[backend_pip_audit]=0
+
+=== frontend_npm_ci ===
+
+added 84 packages, and audited 85 packages in 3s
+
+28 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+EXIT_CODE[frontend_npm_ci]=0
+
+=== frontend_npm_test ===
+
+> redpath-console@0.1.0 test
+> vitest run --run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/home/ubuntu/RedPath/frontend[39m
+
+ [32m✓[39m src/data/redpathDemo.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m src/features/analyst-console/__tests__/model.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m src/features/analyst-console/__tests__/api.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+ [32m✓[39m src/features/analyst-console/api.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 60[2mms[22m[39m
+ [32m✓[39m src/features/analyst-console/AnalystConsole.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m5 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[32m16 passed[39m[22m[90m (16)[39m
+[2m   Start at [22m 01:50:14
+[2m   Duration [22m 823ms[2m (transform 577ms, setup 0ms, import 806ms, tests 182ms, environment 1ms)[22m
+
+EXIT_CODE[frontend_npm_test]=0
+
+=== frontend_npm_build ===
+
+> redpath-console@0.1.0 build
+> tsc -b && vite build
+
+vite v8.2.1 building client environment for production...
+[2Ktransforming...(!) %VITE_ANALYTICS_ENDPOINT% is not defined in env variables found in /index.html. Is the variable mistyped?
+(!) %VITE_ANALYTICS_WEBSITE_ID% is not defined in env variables found in /index.html. Is the variable mistyped?
+<script src="%VITE_ANALYTICS_ENDPOINT%/umami"> in "/index.html" can't be bundled without type="module" attribute
+[32m✓[0m 1810 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[0m[32mindex.html                 [0m[1;2m  1.03 kB[0m[2m │ gzip:  0.58 kB[0m
+[2mdist/[0m[2massets/[0m[35mindex-Jr0ln6I1.css  [0m[1;2m104.15 kB[0m[2m │ gzip: 22.99 kB[0m
+[2mdist/[0m[2massets/[0m[36mindex-Ch0jdWzp.js   [0m[1;2m263.59 kB[0m[2m │ gzip: 79.63 kB[0m
+
+✓ built in 776ms
+EXIT_CODE[frontend_npm_build]=0
+
+=== docs_check ===
+/usr/local/lib/python3.12/dist-packages/fpdf/__init__.py:43: UserWarning: You have both PyFPDF & fpdf2 installed. Both packages cannot be installed at the same time as they share the same module namespace. To only keep fpdf2, run: pip uninstall --yes pypdf && pip install --upgrade fpdf2
+  warnings.warn(
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> d5824340cb21, Initial RedPath schema and legacy tenant backfill.
+Documentation checks passed: links, API paths, release commands, and public naming are consistent.
+EXIT_CODE[docs_check]=0
+
+=== BASELINE SUMMARY ===
+EXIT_CODE[backend_pytest]=0
+EXIT_CODE[backend_ruff]=0
+EXIT_CODE[backend_bandit]=0
+EXIT_CODE[backend_pip_audit]=0
+EXIT_CODE[frontend_npm_ci]=0
+EXIT_CODE[frontend_npm_test]=0
+EXIT_CODE[frontend_npm_build]=0
+EXIT_CODE[docs_check]=0
