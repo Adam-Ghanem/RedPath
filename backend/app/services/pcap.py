@@ -470,6 +470,7 @@ def register_pcap_analysis(
     max_flows: int = MAX_FLOWS,
     max_observations: int = MAX_OBSERVATIONS,
     redaction_salt: str = DEFAULT_REDACTION_SALT,
+    retention_days: int = 90,
 ) -> PcapAnalysisResponse:
     principal = maybe_principal()
     if principal is not None:
@@ -493,18 +494,19 @@ def register_pcap_analysis(
 
             if session.query(Campaign).filter_by(id=campaign_id, tenant_id=tenant_id).first() is None:
                 raise KeyError(f"Unknown campaign: {campaign_id}")
-        session.add(
-            EvidenceItem(
-                id=evidence_id,
-                tenant_id=tenant_id,
-                campaign_id=campaign_id,
-                evidence_type="pcap",
-                source="offline-upload",
-                title=file_name,
-                sha256=analysis["sha256"],
-                notes="Offline PCAP analysis; raw capture bytes are not persisted by this vertical slice.",
-            )
+        from app.services.pcap_lifecycle import create_retained_lifecycle
+
+        evidence = EvidenceItem(
+            id=evidence_id,
+            tenant_id=tenant_id,
+            campaign_id=campaign_id,
+            evidence_type="pcap",
+            source="offline-upload",
+            title=file_name,
+            sha256=analysis["sha256"],
+            notes="Offline PCAP analysis; raw capture bytes are not persisted by this vertical slice.",
         )
+        session.add(evidence)
         session.add(
             PcapAnalysis(
                 id=analysis_id,
@@ -515,6 +517,8 @@ def register_pcap_analysis(
                 **analysis,
             )
         )
+        session.flush()
+        create_retained_lifecycle(session, evidence, analysis_id, retention_days)
         session.commit()
     return PcapAnalysisResponse(
         analysis_id=analysis_id,
@@ -598,6 +602,17 @@ def get_pcap_analysis(analysis_id: str, tenant_id: str, session_factory: Session
     return _analysis_response(row)
 
 
+def _lifecycle_view(
+    analysis_id: str,
+    evidence_id: str,
+    tenant_id: str,
+    session_factory: SessionFactory,
+) -> tuple[Any, Any, Any]:
+    from app.services.pcap_lifecycle import get_pcap_lifecycle_views
+
+    return get_pcap_lifecycle_views(analysis_id, evidence_id, tenant_id, session_factory)
+
+
 def get_pcap_evidence_view(
     analysis_id: str, tenant_id: str, session_factory: SessionFactory
 ) -> PcapEvidenceView:
@@ -615,8 +630,10 @@ def get_pcap_evidence_view(
     if row is None:
         raise KeyError(f"Unknown PCAP analysis: {analysis_id}")
     analysis, evidence = row
+    lifecycle, manifest, redaction = _lifecycle_view(analysis.id, evidence.id, tenant_id, session_factory)
     return PcapEvidenceView(
         evidence=EvidenceResponse(
+            tenant_id=evidence.tenant_id,
             evidence_id=evidence.id,
             campaign_id=evidence.campaign_id,
             run_id=evidence.run_id,
@@ -626,12 +643,16 @@ def get_pcap_evidence_view(
             sha256=evidence.sha256,
             technique_id=evidence.technique_id,
             notes=evidence.notes,
+            manifest_sha256=evidence.manifest_sha256 or evidence.sha256,
             review_status=evidence.review_status,
             reviewer=evidence.reviewer,
             reviewed_at=evidence.reviewed_at,
             created_at=evidence.created_at,
         ),
         analysis=_analysis_response(analysis),
+        lifecycle=lifecycle,
+        manifest=manifest,
+        redaction=redaction,
     )
 
 
@@ -652,6 +673,7 @@ def get_pcap_evidence_view_by_evidence(
     if row is None:
         raise KeyError(f"Unknown PCAP evidence: {evidence_id}")
     analysis, evidence = row
+    lifecycle, manifest, redaction = _lifecycle_view(analysis.id, evidence.id, tenant_id, session_factory)
     return PcapEvidenceView(
         evidence=EvidenceResponse(
             tenant_id=evidence.tenant_id,
@@ -671,4 +693,7 @@ def get_pcap_evidence_view_by_evidence(
             created_at=evidence.created_at,
         ),
         analysis=_analysis_response(analysis),
+        lifecycle=lifecycle,
+        manifest=manifest,
+        redaction=redaction,
     )

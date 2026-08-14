@@ -67,6 +67,11 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/pcap/analyses` | List normalized PCAP analyses for a tenant | Role-gated, tenant-filtered local read |
 | GET | `/api/v1/pcap/analyses/{analysis_id}` | Retrieve one normalized PCAP analysis | Role-gated; cross-tenant IDs return 404 |
 | GET | `/api/v1/evidence/{evidence_id}/pcap` | Retrieve linked evidence and bounded redacted PCAP summaries | Read permission; evidence and analysis tenant predicates; cross-tenant IDs return 404 |
+| GET | `/api/v1/pcap/lifecycle` | List retained and quarantined PCAP lifecycle metadata | Read permission; tenant-filtered; bounded state/limit filters |
+| GET | `/api/v1/pcap/evidence/{evidence_id}/lifecycle` | Read retention, legal-hold, quarantine, and metadata-only storage state | Read permission; tenant-filtered |
+| GET | `/api/v1/pcap/evidence/{evidence_id}/manifest` | Verify immutable evidence manifest integrity | Read permission; recomputes canonical digest; no mutation |
+| GET | `/api/v1/pcap/evidence/{evidence_id}/deletion-check` | Check deletion eligibility in dry-run mode | Read permission; retention/legal-hold checks only; no deletion |
+| GET | `/api/v1/pcap/analyses/{analysis_id}/drilldown` | Read bounded flow, DNS, and observation drill-down | Read permission; fails closed on manifest/redaction verification failure |
 
 ## Recon request
 
@@ -128,7 +133,7 @@ Risk acceptances are created with server-derived approval attribution, may be re
 
 ## Offline PCAP forensics
 
-The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations and flow/DNS summaries in memory, pseudonymize IP and DNS identifiers with a server-held HMAC salt, register the digest in the existing evidence workflow, and persist only normalized metadata. Raw packet bytes and application payloads are not returned or persisted. Upload requires an authenticated principal with the `analyze` permission, while reads require the `read` permission; the tenant and actor are derived from the authenticated session. The linked evidence view joins only records belonging to the authenticated tenant. See [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, and parser coverage.
+The PCAP endpoints accept only offline `.pcap` and `.pcapng` files. They compute SHA-256 over the uploaded bytes, decode bounded network observations and flow/DNS summaries in memory, pseudonymize IP and DNS identifiers with a server-held HMAC salt, register the digest in the existing evidence workflow, and persist only normalized metadata. Raw packet bytes and application payloads are not returned or persisted. Successful analyses receive a metadata-only retained lifecycle; parse failures create a quarantined metadata record with a generic safe error envelope. Upload requires an authenticated principal with the `analyze` permission, while reads require the `read` permission; the tenant and actor are derived from the authenticated session. Manifest and redaction verification are fail-closed for drill-down, and deletion checks are read-only. See [`docs/pcap-forensics.md`](pcap-forensics.md) for the contract, limits, retention, rollback, and parser coverage.
 
 ## Attack-path analysis
 

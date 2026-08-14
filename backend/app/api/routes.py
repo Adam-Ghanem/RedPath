@@ -119,7 +119,15 @@ from app.schemas.identity import (
     UserCreateRequest,
     UserResponse,
 )
-from app.schemas.pcap import PcapAnalysisResponse, PcapAnalysisSummary, PcapEvidenceView
+from app.schemas.pcap import (
+    PcapAnalysisResponse,
+    PcapAnalysisSummary,
+    PcapDeletionCheckResponse,
+    PcapDrilldownResponse,
+    PcapEvidenceView,
+    PcapLifecycleResponse,
+    PcapManifestVerification,
+)
 from app.services.ad_detection import detect_ad_findings
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
 from app.services.case_governance import (
@@ -179,6 +187,16 @@ from app.services.pcap import (
     get_pcap_evidence_view_by_evidence,
     list_pcap_analyses,
     register_pcap_analysis,
+)
+from app.services.pcap_lifecycle import (
+    PcapLifecycleViolation,
+    check_pcap_deletion,
+    get_pcap_drilldown,
+    get_pcap_lifecycle,
+    get_pcap_manifest,
+    list_pcap_lifecycles,
+    quarantine_pcap,
+    safe_parse_failure,
 )
 from app.services.purple import build_detection_gap_report
 from app.services.recon import ReconService
@@ -1002,10 +1020,35 @@ def build_router(
                 max_flows=settings.pcap_max_flows,
                 max_observations=settings.pcap_max_observations,
                 redaction_salt=settings.pcap_redaction_salt,
+                retention_days=settings.pcap_retention_days,
             )
         except PcapFormatError as exc:
-            record_audit("pcap.rejected", {"tenant_id": tenant_id, "file_name": file_name, "reason": str(exc)})
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            failure_code, safe_error = safe_parse_failure(exc)
+            quarantine = quarantine_pcap(
+                data,
+                file_name,
+                tenant_id,
+                session_factory,
+                failure_code=failure_code,
+                parse_error=safe_error,
+                retention_days=settings.pcap_quarantine_retention_days,
+            )
+            record_audit(
+                "pcap.quarantined",
+                {
+                    "tenant_id": tenant_id,
+                    "evidence_id": quarantine.evidence_id,
+                    "failure_code": failure_code,
+                },
+            )
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Offline PCAP parsing failed; evidence was quarantined.",
+                    "evidence_id": quarantine.evidence_id,
+                    "failure_code": failure_code,
+                },
+            ) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         record_audit(
@@ -1029,6 +1072,29 @@ def build_router(
         return list_pcap_analyses(get_principal().tenant_id, session_factory, limit)
 
     @protected_router.get(
+        "/pcap/analyses/{analysis_id}/drilldown",
+        response_model=PcapDrilldownResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def pcap_analysis_drilldown(analysis_id: str) -> PcapDrilldownResponse:
+        try:
+            return get_pcap_drilldown(
+                analysis_id,
+                get_principal().tenant_id,
+                session_factory,
+                max_flows=settings.pcap_drilldown_max_flows,
+                max_dns=settings.pcap_drilldown_max_dns,
+                max_observations=settings.pcap_drilldown_max_observations,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="PCAP analysis not found") from exc
+        except PcapLifecycleViolation as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="PCAP evidence failed integrity or privacy verification",
+            ) from exc
+
+    @protected_router.get(
         "/pcap/analyses/{analysis_id}",
         response_model=PcapAnalysisResponse,
         dependencies=[Depends(permission_dependency("read"))],
@@ -1038,6 +1104,53 @@ def build_router(
             return get_pcap_analysis(analysis_id, get_principal().tenant_id, session_factory)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @protected_router.get(
+        "/pcap/lifecycle",
+        response_model=list[PcapLifecycleResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def pcap_lifecycle_list(
+        state: str | None = Query(default=None, min_length=1, max_length=32),
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> list[PcapLifecycleResponse]:
+        try:
+            return list_pcap_lifecycles(get_principal().tenant_id, session_factory, state=state, limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Invalid PCAP lifecycle filter") from exc
+
+    @protected_router.get(
+        "/pcap/evidence/{evidence_id}/lifecycle",
+        response_model=PcapLifecycleResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def pcap_lifecycle(evidence_id: str) -> PcapLifecycleResponse:
+        try:
+            return get_pcap_lifecycle(evidence_id, get_principal().tenant_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="PCAP lifecycle not found") from exc
+
+    @protected_router.get(
+        "/pcap/evidence/{evidence_id}/manifest",
+        response_model=PcapManifestVerification,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def pcap_manifest(evidence_id: str) -> PcapManifestVerification:
+        try:
+            return get_pcap_manifest(evidence_id, get_principal().tenant_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="PCAP manifest not found") from exc
+
+    @protected_router.get(
+        "/pcap/evidence/{evidence_id}/deletion-check",
+        response_model=PcapDeletionCheckResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def pcap_deletion_check(evidence_id: str) -> PcapDeletionCheckResponse:
+        try:
+            return check_pcap_deletion(evidence_id, get_principal().tenant_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="PCAP lifecycle not found") from exc
 
     @protected_router.get(
         "/evidence/{evidence_id}/pcap",

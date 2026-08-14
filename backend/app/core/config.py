@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     pcap_max_flows: int = 1_000
     pcap_max_observations: int = 1_000
     pcap_redaction_salt: str = "redpath-lab-redaction-salt"
+    pcap_retention_days: int = 90
+    pcap_quarantine_retention_days: int = 30
+    pcap_deletion_grace_days: int = 7
+    pcap_drilldown_max_flows: int = 25
+    pcap_drilldown_max_dns: int = 25
+    pcap_drilldown_max_observations: int = 100
     siem_max_query_window_hours: int = 24
     siem_request_timeout_seconds: int = 20
     siem_connector_role: str = "redpath_reader"

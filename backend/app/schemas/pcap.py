@@ -101,8 +101,86 @@ class PcapAnalysisSummary(BaseModel):
     created_at: datetime
 
 
+class PcapStorageMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    storage_backend: Literal["metadata-only"] = "metadata-only"
+    storage_locator: Literal["none"] = "none"
+    raw_bytes_retained: Literal[False] = False
+    stored_bytes: int = Field(default=0, ge=0, le=0)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class PcapManifestVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    valid: bool
+    computed_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    stored_manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    checked_at: datetime
+    failure_code: str | None = None
+
+
+class PcapRedactionVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool
+    checked_fields: int = Field(ge=0)
+    violation_codes: list[str] = Field(default_factory=list, max_length=16)
+    mode: Literal["pseudonymized"] = "pseudonymized"
+
+
+class PcapLifecycleResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lifecycle_id: str
+    tenant_id: str
+    evidence_id: str
+    analysis_id: str | None = None
+    state: Literal["retained", "quarantined", "deletion_pending", "deleted"]
+    failure_code: str | None = None
+    parse_error: str | None = None
+    storage: PcapStorageMetadata
+    retention_until: datetime
+    legal_hold: bool = False
+    manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+    updated_at: datetime
+
+
+class PcapDeletionCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    allowed: bool
+    dry_run: Literal[True] = True
+    blockers: list[str] = Field(default_factory=list, max_length=8)
+    retention_until: datetime
+    legal_hold: bool = False
+    state: Literal["retained", "quarantined", "deletion_pending", "deleted"]
+
+
+class PcapDrilldownResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    analysis_id: str
+    evidence_id: str
+    tenant_id: str
+    lifecycle: PcapLifecycleResponse
+    manifest: PcapManifestVerification
+    redaction: PcapRedactionVerification
+    flows: list[PcapFlowSummary] = Field(default_factory=list, max_length=25)
+    dns_summary: list[PcapDnsSummary] = Field(default_factory=list, max_length=25)
+    observations: list[PcapObservation] = Field(default_factory=list, max_length=100)
+    warnings: list[str] = Field(default_factory=list, max_length=100)
+
+
 class PcapEvidenceView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence: EvidenceResponse
     analysis: PcapAnalysisResponse
+    lifecycle: PcapLifecycleResponse | None = None
+    manifest: PcapManifestVerification | None = None
+    redaction: PcapRedactionVerification | None = None

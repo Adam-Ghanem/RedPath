@@ -283,6 +283,28 @@ class PcapAnalysis(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PcapLifecycle(Base):
+    __tablename__ = "pcap_lifecycles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    analysis_id: Mapped[str | None] = mapped_column(ForeignKey("pcap_analyses.id"), nullable=True, index=True)
+    state: Mapped[str] = mapped_column(String(32), default="retained", index=True)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parse_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    storage_backend: Mapped[str] = mapped_column(String(32), default="metadata-only")
+    storage_locator: Mapped[str] = mapped_column(String(16), default="none")
+    raw_bytes_retained: Mapped[bool] = mapped_column(Boolean, default=False)
+    stored_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    source_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    retention_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    legal_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class RemediationItem(Base):
     __tablename__ = "remediation_items"
 
