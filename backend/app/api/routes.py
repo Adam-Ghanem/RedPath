@@ -76,8 +76,17 @@ from app.schemas.contracts import (
     EvidenceCreate,
     EvidenceCustodyEventResponse,
     EvidenceCustodyVerifyRequest,
+    EvidenceDeletionDecisionRequest,
+    EvidenceDeletionRequestCreate,
+    EvidenceDeletionRequestResponse,
+    EvidenceIntegrityResponse,
+    EvidenceLegalHoldRequest,
+    EvidenceLegalHoldResponse,
     EvidenceManifest,
+    EvidencePrivacySummary,
     EvidenceResponse,
+    EvidenceRetentionDecisionRequest,
+    EvidenceRetentionDecisionResponse,
     EvidenceReviewUpdate,
     ExecutiveKpis,
     FindingInput,
@@ -162,6 +171,17 @@ from app.services.discovery_jobs import (
     DiscoveryJobNotFound,
     DiscoveryJobService,
     DiscoveryRateLimitExceeded,
+)
+from app.services.evidence_governance import (
+    EvidenceGovernanceViolation,
+    create_retention_decision,
+    decide_deletion,
+    get_legal_hold,
+    list_retention_decisions,
+    privacy_summary,
+    request_deletion,
+    reverify_integrity,
+    set_legal_hold,
 )
 from app.services.expert_ops import (
     assign_remediation,
@@ -1142,6 +1162,138 @@ def build_router(
             {"evidence_id": evidence_id, "decision": result.decision, "manifest_sha256": result.manifest_sha256},
         )
         return result
+
+    @protected_router.post(
+        "/evidence/{evidence_id}/integrity/reverify",
+        response_model=EvidenceIntegrityResponse,
+        dependencies=[Depends(permission_dependency("view_audit"))],
+    )
+    def evidence_integrity_reverify(evidence_id: str) -> EvidenceIntegrityResponse:
+        try:
+            result = reverify_integrity(evidence_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Evidence not found") from exc
+        record_audit(
+            "evidence.integrity_reverified",
+            {"evidence_id": evidence_id, "valid": result.valid, "failure_code": result.failure_code},
+        )
+        return result
+
+    @protected_router.post(
+        "/evidence/{evidence_id}/legal-hold",
+        response_model=EvidenceLegalHoldResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def evidence_legal_hold(
+        evidence_id: str,
+        request: EvidenceLegalHoldRequest,
+    ) -> EvidenceLegalHoldResponse:
+        try:
+            result = set_legal_hold(evidence_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Evidence not found") from exc
+        record_audit(
+            "evidence.legal_hold_changed",
+            {"evidence_id": evidence_id, "active": result.active},
+        )
+        return result
+
+    @protected_router.get(
+        "/evidence/{evidence_id}/legal-hold",
+        response_model=EvidenceLegalHoldResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def evidence_legal_hold_get(evidence_id: str) -> EvidenceLegalHoldResponse:
+        try:
+            return get_legal_hold(evidence_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Evidence not found") from exc
+
+    @protected_router.post(
+        "/evidence/{evidence_id}/retention-decision",
+        response_model=EvidenceRetentionDecisionResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def evidence_retention_decision(
+        evidence_id: str,
+        request: EvidenceRetentionDecisionRequest,
+    ) -> EvidenceRetentionDecisionResponse:
+        try:
+            result = create_retention_decision(evidence_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Evidence not found") from exc
+        record_audit(
+            "evidence.retention_decided",
+            {"evidence_id": evidence_id, "decision": result.decision},
+        )
+        return result
+
+    @protected_router.get(
+        "/evidence/{evidence_id}/retention-history",
+        response_model=list[EvidenceRetentionDecisionResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def evidence_retention_history(
+        evidence_id: str,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> list[EvidenceRetentionDecisionResponse]:
+        try:
+            return list_retention_decisions(evidence_id, session_factory, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Evidence not found") from exc
+
+    @protected_router.post(
+        "/evidence/{evidence_id}/deletion-request",
+        response_model=EvidenceDeletionRequestResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def evidence_deletion_request(
+        evidence_id: str,
+        request: EvidenceDeletionRequestCreate,
+    ) -> EvidenceDeletionRequestResponse:
+        try:
+            result = request_deletion(evidence_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Evidence not found") from exc
+        except EvidenceGovernanceViolation as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit("evidence.deletion_requested", {"evidence_id": evidence_id})
+        return result
+
+    @protected_router.post(
+        "/evidence/{evidence_id}/deletion-request/{request_id}/decision",
+        response_model=EvidenceDeletionRequestResponse,
+        dependencies=[Depends(permission_dependency("view_audit"))],
+    )
+    def evidence_deletion_decision(
+        evidence_id: str,
+        request_id: str,
+        request: EvidenceDeletionDecisionRequest,
+    ) -> EvidenceDeletionRequestResponse:
+        try:
+            result = decide_deletion(evidence_id, request_id, request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Deletion request not found") from exc
+        except EvidenceGovernanceViolation as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            "evidence.deletion_decided",
+            {"evidence_id": evidence_id, "request_id": request_id, "decision": request.decision},
+        )
+        return result
+
+    @protected_router.get(
+        "/evidence/{evidence_id}/privacy-summary",
+        response_model=EvidencePrivacySummary,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def evidence_privacy_summary(evidence_id: str) -> EvidencePrivacySummary:
+        try:
+            return privacy_summary(evidence_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Evidence not found") from exc
 
     @protected_router.post(
         "/pcap/analyses",

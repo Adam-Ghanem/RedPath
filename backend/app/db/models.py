@@ -307,6 +307,48 @@ class EvidenceItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class EvidenceLegalHold(Base):
+    __tablename__ = "evidence_legal_holds"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    placed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    placed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EvidenceRetentionDecision(Base):
+    __tablename__ = "evidence_retention_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(32), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EvidenceDeletionRequest(Base):
+    __tablename__ = "evidence_deletion_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    state: Mapped[str] = mapped_column(String(32), default="requested", index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(String(128))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_note: Mapped[str] = mapped_column(Text, default="")
+
+
 class PcapAnalysis(Base):
     __tablename__ = "pcap_analyses"
 

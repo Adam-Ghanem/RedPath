@@ -22,6 +22,19 @@ Evidence stores the supplied content SHA-256 after hexadecimal validation and pe
 
 The existing chained JSONL audit log remains the authoritative integrity check for API operations. The case governance history is an append-only local record of case, evidence, remediation, assignment, custody, verification, assessment-link, and risk-acceptance decisions. Chain-of-custody verification requires the exact persisted immutable evidence manifest digest and records the decision, server-derived actor, and redacted note in a separate append-only custody history. Governance summaries and metadata are redacted for common inline credential and token assignments before persistence.
 
+Evidence lifecycle governance adds the following tenant-safe interfaces:
+
+| Interface | Boundary |
+| --- | --- |
+| `POST /api/v1/evidence/{evidence_id}/integrity/reverify` | Requires `view_audit`; recomputes the immutable manifest and validates metadata-only storage without reading or exporting payload bytes. |
+| `POST` and `GET /api/v1/evidence/{evidence_id}/legal-hold` | Requires `manage_cases` to change a hold and `read` to view it; hold reasons and actors are server-attributed and redacted. |
+| `POST /api/v1/evidence/{evidence_id}/retention-decision` and `GET .../retention-history` | Records append-only `retain`, `defer`, or `eligible_for_deletion` decisions with tenant and actor fields. |
+| `POST /api/v1/evidence/{evidence_id}/deletion-request` | Creates an approval request only after an eligible retention decision and with no active legal hold; it never deletes evidence. |
+| `POST /api/v1/evidence/{evidence_id}/deletion-request/{request_id}/decision` | Requires `view_audit`; approval requires a different actor from the requester and rechecks hold and retention boundaries. |
+| `GET /api/v1/evidence/{evidence_id}/privacy-summary` | Returns bounded governance and storage metadata only; raw packets, payloads, credentials, and storage locators are excluded. |
+
+The PCAP storage provider is a metadata-only abstraction. Its verification fails closed if a lifecycle record advertises a non-metadata backend, a locator, retained bytes, a non-zero byte count, or a source hash mismatch.
+
 Risk acceptances are created with server-derived approval attribution, can be revoked or re-approved with a future expiry, and can be explicitly expired only after the persisted expiry date. The expiry and approval states are included in governance history and tenant-safe exports. The SLA escalation policy is deterministic and read-only: it returns manager or leadership review recommendations for due-soon and overdue remediations but does not send notifications or mutate remote systems.
 
 ## Export contract
@@ -30,4 +43,4 @@ Risk acceptances are created with server-derived approval attribution, can be re
 
 ## Cross-role integration
 
-Platform orchestration should link completed assessment runs through the existing campaign-run endpoint and then consume the case history for explainability. Identity and API security should retain the current authentication and permission dependencies and extend tenant/resource authorization as the shared provider evolves. Reporting and frontend clients should consume the export contract rather than reconstructing KPIs or tenant filters client-side. DevOps should apply the additive case-management migration through the formal migration runner before production startup. The migration adds nullable/defaulted columns and the append-only custody table; rollback is application-first and non-destructive, leaving those fields in place until a separately reviewed maintenance migration can remove them after backup and dependency review.
+Platform orchestration should link completed assessment runs through the existing campaign-run endpoint and then consume the case history for explainability. Identity and API security should retain the current authentication and permission dependencies and extend tenant/resource authorization as the shared provider evolves. Reporting and frontend clients should consume the export contract rather than reconstructing KPIs or tenant filters client-side. DevOps should apply the additive governance revision through the formal migration runner before production startup. The governance tables are metadata-only and can be rolled back to the prior revision after an approved backup and validation; application-first rollback is preferred, and no evidence deletion executor is part of this interface.

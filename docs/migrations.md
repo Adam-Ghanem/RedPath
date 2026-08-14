@@ -4,7 +4,7 @@ RedPath database changes must be additive, tenant-safe, auditable, and reversibl
 
 ## Forward migration
 
-For a schema change, create a numbered lower-snake-case SQL artifact under `backend/migrations/` using the next available filename in the relevant migration chain. Keep the statement set additive: create tables or indexes, add nullable or safely defaulted columns, and add compatibility projections. Do not edit an already-applied migration. When an Alembic revision exists for the deployment, the release process must apply it with `alembic upgrade head` against the reviewed database URL; the revision and the SQL artifact must represent the same schema contract. The current prototype also runs the idempotent `run_migrations()` compatibility runner during database initialization, so any external migration must remain safe when that runner executes afterward.
+For a schema change, create one Alembic revision under `backend/alembic/versions/` with the next reviewed revision identifier. Keep the statement set additive: create tables or indexes, add nullable or safely defaulted columns, and add compatibility projections. Do not edit an already-applied revision or add parallel SQL artifacts under `backend/migrations/`. The release process applies the reviewed revision with `alembic upgrade head` against the reviewed database URL, and the compatibility runner remains Alembic-backed during application initialization.
 
 Before applying a migration to a tenant-bearing deployment, take the approved database backup or snapshot and record the migration commit, target environment, operator identity, and resulting schema version. Apply the migration in a transaction where the database supports transactional DDL. Start with a staging or restored copy, then run the repository migration validation and application smoke tests before production rollout.
 
@@ -14,7 +14,9 @@ PYTHONPATH=backend python ci/check_migrations.py
 pytest -q backend/tests/test_migrations.py
 ```
 
-The validator checks filename discipline, additive DDL, absence of destructive statements, required tenant columns, legacy-tenant backfill, schema-version idempotence, and the existence of this rollback procedure. The SQL artifact set is intentionally validated even when a deployment uses Alembic so that the prototype compatibility path cannot silently diverge.
+The validator checks revision discipline, additive DDL, absence of destructive statements in forward migration sources, required tenant columns, legacy-tenant backfill, schema-version idempotence, and the existence of this rollback procedure.
+
+The evidence-governance revision `4f2a6c1e9b77` follows PCAP lifecycle revision `22d614b2aac8` and adds tenant-scoped legal holds, append-only retention decisions, and approval-only deletion requests. It stores metadata and decisions only; it does not retain packet bytes or provide a deletion executor.
 
 The inventory reliability revision `c14f9b72d6e1` is Alembic-only and follows `22d614b2aac8`. It adds tenant-scoped lease, checkpoint, retry-budget, result-compaction, and composite-index state. Apply it with `alembic upgrade head` only after workers are quiesced or the deployment can tolerate additive fields appearing during rollout. The downgrade function removes only the state and indexes introduced by this revision after a reviewed maintenance window; production rollback should follow the application-revert, snapshot, or compensating-migration procedure below rather than an ad hoc database command.
 
@@ -36,3 +38,5 @@ pytest -q backend/tests/test_migrations.py backend/tests/test_kernel_contracts.p
 ```
 
 Reliability changes that add or alter a database table, column, or index must include an Alembic revision, downgrade function, migration-contract test coverage, and a documented maintenance-window rollback. The inventory reliability revision is validated by the same migration and application gates above; no legacy SQL migration artifact is added.
+
+The evidence-governance change adds one Alembic revision and focused upgrade/downgrade/re-upgrade coverage. Future persistence changes must add their own additive revision and update migration tests before merge.

@@ -876,6 +876,103 @@ class EvidenceCustodyEventResponse(BaseModel):
     created_at: datetime
 
 
+class EvidenceIntegrityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    tenant_id: str
+    valid: bool
+    checked_at: datetime
+    expected_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    stored_manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    storage_backend: str = Field(min_length=1, max_length=32)
+    raw_bytes_retained: bool = False
+    stored_bytes: int = Field(default=0, ge=0)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    failure_code: str | None = None
+
+
+class EvidenceLegalHoldRequest(BaseModel):
+    action: Literal["place", "release"]
+    reason: str = Field(min_length=3, max_length=2000)
+
+
+class EvidenceLegalHoldResponse(BaseModel):
+    evidence_id: str
+    tenant_id: str
+    active: bool
+    reason: str = ""
+    placed_by: str | None = None
+    placed_at: datetime | None = None
+    released_by: str | None = None
+    released_at: datetime | None = None
+    updated_at: datetime
+
+
+class EvidenceRetentionDecisionRequest(BaseModel):
+    decision: Literal["retain", "eligible_for_deletion", "defer"]
+    reason: str = Field(min_length=3, max_length=2000)
+
+
+class EvidenceRetentionDecisionResponse(BaseModel):
+    decision_id: str
+    evidence_id: str
+    tenant_id: str
+    decision: Literal["retain", "eligible_for_deletion", "defer"]
+    reason: str
+    actor: str
+    created_at: datetime
+
+
+class EvidenceDeletionRequestCreate(BaseModel):
+    reason: str = Field(min_length=3, max_length=2000)
+
+
+class EvidenceDeletionDecisionRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    note: str = Field(default="", max_length=2000)
+
+
+class EvidenceDeletionRequestResponse(BaseModel):
+    request_id: str
+    evidence_id: str
+    tenant_id: str
+    state: Literal["requested", "approved", "rejected"]
+    reason: str
+    requested_by: str
+    requested_at: datetime
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    decision_note: str = ""
+
+
+class EvidenceStorageMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    storage_backend: Literal["metadata-only"] = "metadata-only"
+    storage_locator: Literal["none"] = "none"
+    raw_bytes_retained: Literal[False] = False
+    stored_bytes: int = Field(default=0, ge=0, le=0)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class EvidencePrivacySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    tenant_id: str
+    evidence_type: str
+    review_status: str
+    custody_status: Literal["unverified", "verified", "rejected"]
+    legal_hold: bool
+    retention_decision: Literal["retain", "eligible_for_deletion", "defer"] | None = None
+    deletion_request_state: Literal["requested", "approved", "rejected"] | None = None
+    manifest_verified: bool
+    storage: EvidenceStorageMetadata
+    summary: str = Field(max_length=500)
+    created_at: datetime
+
+
 class RemediationCreate(BaseModel):
     campaign_id: str | None = None
     finding_title: str = Field(min_length=3, max_length=255)
