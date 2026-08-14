@@ -246,6 +246,10 @@ class EvidenceItem(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     manifest_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    custody_status: Mapped[str] = mapped_column(String(32), default="unverified", index=True)
+    custody_verified_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    custody_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    custody_verification_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -286,8 +290,12 @@ class RemediationItem(Base):
     technique_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     recommendation: Mapped[str] = mapped_column(Text)
     owner: Mapped[str] = mapped_column(String(128), default="unassigned")
+    assigned_to: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     priority: Mapped[str] = mapped_column(String(16), default="medium", index=True)
     status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+    verification_status: Mapped[str] = mapped_column(String(32), default="unverified", index=True)
+    verified_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     due_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -306,6 +314,11 @@ class RiskAcceptance(Base):
     approver: Mapped[str] = mapped_column(String(128))
     expires_on: Mapped[str] = mapped_column(String(32), index=True)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    approval_status: Mapped[str] = mapped_column(String(32), default="approved", index=True)
+    approved_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -383,6 +396,20 @@ class TelemetryEvent(Base):
     safe_fields: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     correlation_fields: Mapped[dict[str, str | int | bool]] = mapped_column(JSON, default=dict)
     raw_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EvidenceCustodyEvent(Base):
+    __tablename__ = "evidence_custody_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(32), index=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    manifest_sha256: Mapped[str] = mapped_column(String(64))
+    note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
