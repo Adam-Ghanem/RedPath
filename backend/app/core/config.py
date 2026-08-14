@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     ai_cache_ttl_seconds: int = 300
     ai_cache_max_entries: int = 256
     ai_max_context_chars: int = 4000
+    risk_simulation_cache_ttl_seconds: int = 30
+    risk_simulation_cache_max_entries: int = 256
+    risk_simulation_max_paths: int = 500
+    risk_simulation_max_traversal_steps: int = 100_000
     pcap_max_upload_bytes: int = 50 * 1024 * 1024
     pcap_max_packets: int = 100_000
     pcap_max_endpoints: int = 100

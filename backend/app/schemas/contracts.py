@@ -391,6 +391,115 @@ class AttackPathAnalysisRecord(BaseModel):
     created_at: datetime
 
 
+class RiskQueryBounds(BaseModel):
+    """Effective limits reported for a bounded, read-only risk planning operation."""
+
+    max_paths: int = Field(default=100, ge=1, le=500)
+    max_traversal_steps: int = Field(default=10_000, ge=1, le=100_000)
+    max_asset_ids: int = Field(default=200, ge=1, le=500)
+    max_evidence_ids: int = Field(default=200, ge=1, le=500)
+
+
+class RiskPathSnapshot(BaseModel):
+    """Server-derived minimized path data; raw graph nodes and edges are not accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path_id: str = Field(pattern=r"^path-[a-f0-9]{12}$")
+    risk_score: float = Field(ge=0, le=100)
+    risk_level: Literal["low", "medium", "high", "critical"]
+    centrality: float = Field(default=0.0, ge=0, le=1)
+    rationale: str = Field(default="", max_length=512)
+    technique_ids: list[str] = Field(default_factory=list, max_length=32)
+    asset_ids: list[str] = Field(default_factory=list, max_length=200)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=200)
+    hop_count: int = Field(ge=1, le=32)
+
+
+class RiskGraphSnapshot(BaseModel):
+    """Tenant-authoritative, minimized snapshot used for offline policy simulation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["risk-snapshot.v1"] = "risk-snapshot.v1"
+    tenant_id: str = Field(min_length=1, max_length=128)
+    analysis_id: str = Field(min_length=1, max_length=128)
+    graph_fingerprint: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    paths: list[RiskPathSnapshot] = Field(max_length=500)
+
+
+class RiskPolicySimulationRequest(BaseModel):
+    """Client policy knobs only; the server resolves the graph snapshot by analysis_id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    analysis_id: str = Field(min_length=1, max_length=128)
+    blocked_technique_ids: list[str] = Field(default_factory=list, max_length=32)
+    max_paths: int = Field(default=100, ge=1, le=500)
+    max_traversal_steps: int = Field(default=10_000, ge=1, le=100_000)
+
+    @field_validator("blocked_technique_ids")
+    @classmethod
+    def validate_technique_ids(cls, values: list[str]) -> list[str]:
+        normalized = sorted(set(values))
+        if any(not value.startswith("T") or len(value) > 32 for value in normalized):
+            raise ValueError("blocked technique IDs must be bounded MITRE-style identifiers")
+        return normalized
+
+
+class RiskScoreDiff(BaseModel):
+    path_id: str
+    baseline_score: float = Field(ge=0, le=100)
+    simulated_score: float = Field(ge=0, le=100)
+    delta: float = Field(ge=-100, le=100)
+    baseline_level: Literal["low", "medium", "high", "critical"]
+    simulated_level: Literal["low", "medium", "high", "critical"]
+    blocked_by_technique_ids: list[str] = Field(default_factory=list, max_length=32)
+
+
+class RiskBlastRadiusSummary(BaseModel):
+    affected_path_count: int = Field(ge=0)
+    affected_asset_ids: list[str] = Field(default_factory=list, max_length=200)
+    affected_evidence_ids: list[str] = Field(default_factory=list, max_length=200)
+    baseline_score: float = Field(ge=0, le=100)
+    simulated_score: float = Field(ge=0, le=100)
+    score_delta: float = Field(ge=-100, le=100)
+
+
+class RiskQueryCost(BaseModel):
+    paths_considered: int = Field(ge=0)
+    traversal_steps: int = Field(ge=0)
+    truncated: bool = False
+    duration_ms: int = Field(ge=0, le=60_000)
+    bounds: RiskQueryBounds
+
+
+class RiskCacheInvalidationEvent(BaseModel):
+    """Read-only cache invalidation contract; no remote or database mutation is implied."""
+
+    schema_version: Literal["risk-cache.v1"] = "risk-cache.v1"
+    tenant_id: str = Field(min_length=1, max_length=128)
+    analysis_id: str = Field(min_length=1, max_length=128)
+    graph_fingerprint: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    reason: Literal["snapshot_changed", "policy_catalog_changed", "manual_review"]
+    invalidation_key: str = Field(min_length=16, max_length=128)
+
+
+class RiskPolicySimulationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["risk-simulation.v1"] = "risk-simulation.v1"
+    tenant_id: str
+    analysis_id: str
+    graph_fingerprint: str
+    blocked_technique_ids: list[str] = Field(default_factory=list, max_length=32)
+    score_diffs: list[RiskScoreDiff] = Field(default_factory=list, max_length=500)
+    blast_radius: RiskBlastRadiusSummary
+    query_cost: RiskQueryCost
+    cache_key: str = Field(min_length=16, max_length=128)
+    cache_hit: bool = False
+
+
 class GraphRequest(BaseModel):
     nodes: list[AttackNode]
     edges: list[AttackEdge]

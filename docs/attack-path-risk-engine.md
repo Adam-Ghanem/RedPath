@@ -99,6 +99,15 @@ The request and response expose effective `query_bounds` and `traversal_steps`. 
 | Traversal steps | 10,000 | 100,000 |
 | Explanation text per field | 2,000 | 2,000 |
 | Projection paths | 50 | 50 |
+| Simulation paths | 100 | 500 |
+| Simulation traversal steps | 10,000 | 100,000 |
+| Simulation cache entries | 256 | 1,000 |
+
+## Read-only policy simulation
+
+`POST /api/v1/risk/simulate` accepts only an `analysis_id` and bounded policy knobs such as `blocked_technique_ids`. The server resolves the tenant-authoritative minimized snapshot from the registered analysis record; clients cannot supply graph paths, scores, assets, evidence, or rationale. The operation is a deterministic what-if calculation only: a path containing a blocked modeled technique is projected at a conservative 25% of its baseline score, and the response reports per-path score changes and a bounded blast-radius summary.
+
+The response includes effective path/traversal bounds, paths considered, traversal steps, truncation state, duration, a tenant-scoped cache key, and cache-hit status. `RiskCacheInvalidationEvent` is a read-only contract for internal snapshot/policy change notifications; it does not perform remote or database mutation. Query-cost telemetry uses allow-listed aggregate counters and one duration gauge without tenant, analysis, path, asset, evidence, or request labels.
 
 ## Validation
 

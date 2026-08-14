@@ -82,6 +82,7 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/siem/telemetry` | Read redacted local telemetry projections | RBAC-protected; server-derived tenant predicate; audit logged |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |
 | POST | `/api/v1/attack-paths/analyze` | Rank tenant-scoped modeled paths and link assets, evidence, and remediation priorities | Protected `analyze` permission; server-filtered inventory/evidence references; aggregate-only audit; no external mutation |
+| POST | `/api/v1/risk/simulate` | Run bounded what-if policy simulation over a registered analysis snapshot | Protected `analyze` permission; server-resolved tenant snapshot; read-only deterministic projection; bounded cache and telemetry |
 | POST | `/api/v1/purple/analyze` | Compare expected techniques against Wazuh-style alerts | Accepts imported evidence; no rule changes |
 | POST | `/api/v1/reports/pdf` | Generate a local PDF from findings and optional coverage | No external side effect |
 | POST | `/api/v1/pcap/analyses` | Analyze one offline PCAP or PCAP-NG upload | Role-gated, tenant-scoped, bounded upload; no raw bytes persisted |
@@ -180,6 +181,12 @@ The result is read-only. It does not create remediation records, modify assets o
 ```
 
 `analysis_id` and `graph_fingerprint` are stable for the same tenant-scoped graph and bounded analysis parameters. A path explanation includes asset and evidence references plus the remediation priority and rationale. Resource limits cap graph size and path enumeration; truncated results report a warning and must not be treated as exhaustive.
+
+### Risk planning and what-if simulation
+
+`POST /api/v1/risk/simulate` accepts only an `analysis_id`, a bounded list of modeled `blocked_technique_ids`, and query caps. The server loads the registered tenant-scoped analysis summary and never accepts client graph paths, scores, assets, evidence, or rationale. A policy simulation is a deterministic read-only projection; it does not validate an attack path, contact a network, mutate a graph, create remediation records, or alter external systems.
+
+The response contains per-path baseline and simulated scores, deterministic risk levels, blocked technique matches, a bounded blast-radius summary, effective query-cost bounds, traversal-step accounting, truncation state, cache status, and a non-sensitive cache key. A tenant-scoped cache invalidation event is an internal contract for snapshot or policy-catalog changes and does not perform remote or database mutation. Query-cost telemetry uses aggregate allow-listed metrics without tenant, analysis, asset, evidence, or request labels. Missing or cross-tenant analyses return the generic not-found response.
 
 ### Grounded AI assessment
 

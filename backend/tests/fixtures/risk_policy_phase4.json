@@ -1,0 +1,26 @@
+{
+  "schema_version": "risk-snapshot.v1",
+  "tenant_id": "tenant-a",
+  "analysis_id": "analysis-a",
+  "graph_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "paths": [
+    {
+      "path_id": "path-aaaaaaaaaaaa",
+      "risk_score": 84.0,
+      "risk_level": "critical",
+      "technique_ids": ["T1003", "T1021"],
+      "asset_ids": ["asset-workstation-a", "asset-domain-a"],
+      "evidence_ids": ["evidence-a"],
+      "hop_count": 3
+    },
+    {
+      "path_id": "path-bbbbbbbbbbbb",
+      "risk_score": 55.0,
+      "risk_level": "medium",
+      "technique_ids": ["T1021"],
+      "asset_ids": ["asset-server-a"],
+      "evidence_ids": ["evidence-b"],
+      "hop_count": 2
+    }
+  ]
+}

@@ -119,6 +119,8 @@ from app.schemas.contracts import (
     RiskAcceptanceDecisionRequest,
     RiskAcceptanceResponse,
     RuleDeprecationReport,
+    RiskPolicySimulationRequest,
+    RiskPolicySimulationResponse,
     ScenarioRunRequest,
     ScenarioRunResponse,
     ScenarioSpec,
@@ -250,6 +252,7 @@ from app.services.pcap_lifecycle import (
 from app.services.purple import build_detection_gap_report
 from app.services.recon import ReconService
 from app.services.report import generate_pdf_report
+from app.services.risk_planning import RiskPlanningService, RiskSnapshotNotFound
 from app.services.scenario_runner import execute_scenario, list_run_summaries
 from app.services.scenarios import list_scenarios
 from app.services.service_accounts import (
@@ -674,6 +677,15 @@ def build_router(
     detection_catalog = DetectionRuleCatalog()
     detection_lifecycle = DetectionLifecycleService(detection_catalog)
     detection_quality = DetectionQualityService(detection_catalog)
+
+    risk_planning = RiskPlanningService(
+        session_factory,
+        metrics=metrics,
+        cache_ttl_seconds=settings.risk_simulation_cache_ttl_seconds,
+        cache_max_entries=settings.risk_simulation_cache_max_entries,
+        max_paths=settings.risk_simulation_max_paths,
+        max_traversal_steps=settings.risk_simulation_max_traversal_steps,
+    )
 
     @router.get("/health", response_model=HealthContract)
     def health() -> HealthContract:
@@ -2233,6 +2245,33 @@ def build_router(
                 "asset_count": len(result.asset_ids),
                 "evidence_count": len(result.evidence_ids),
                 "remediation_link_count": len(result.remediation_links),
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/risk/simulate",
+        response_model=RiskPolicySimulationResponse,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def risk_simulate(request: RiskPolicySimulationRequest) -> RiskPolicySimulationResponse:
+        principal = get_principal()
+        try:
+            result = risk_planning.simulate(request, authorized_tenant_id=principal.tenant_id)
+        except RiskSnapshotNotFound as exc:
+            raise HTTPException(status_code=404, detail="risk analysis snapshot not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="risk analysis tenant is not authorized") from exc
+        record_audit(
+            "risk.simulated",
+            {
+                "tenant_id": principal.tenant_id,
+                "analysis_id": result.analysis_id,
+                "score_diff_count": len(result.score_diffs),
+                "affected_path_count": result.blast_radius.affected_path_count,
+                "truncated": result.query_cost.truncated,
+                "cache_hit": result.cache_hit,
+                "duration_ms": result.query_cost.duration_ms,
             },
         )
         return result

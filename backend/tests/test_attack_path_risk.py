@@ -1,11 +1,21 @@
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from app.core.authz import Principal, authorize_tenant, require_authenticated_analyst
-from app.db.models import Asset, EvidenceItem, ScanRun, create_session_factory
-from app.schemas.contracts import AttackEdge, AttackNode, AttackPathAnalysisRequest
+from app.core.observability import MetricsRegistry
+from app.db.models import Asset, AttackPathAnalysis, EvidenceItem, ScanRun, create_session_factory
+from app.schemas.contracts import (
+    AttackEdge,
+    AttackNode,
+    AttackPathAnalysisRequest,
+    RiskGraphSnapshot,
+    RiskPolicySimulationRequest,
+)
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
+from app.services.risk_planning import RiskPlanningService, RiskSnapshotNotFound
 from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.requests import Request
@@ -403,3 +413,158 @@ def test_attack_path_api_enforces_authentication_and_returns_analysis() -> None:
     assert authorized.status_code == 200
     assert authorized.json()["ranked_paths"][0]["risk_level"] == "critical"
     assert authorized.json()["tenant_id"] == me.json()["tenant_id"]
+
+
+RISK_PHASE4_FIXTURE = Path(__file__).parent / "fixtures" / "risk_policy_phase4.json"
+
+
+def _seed_phase4_snapshot(tmp_path: Path, tenant_id: str = "tenant-a") -> tuple[RiskPlanningService, MetricsRegistry]:
+    fixture = json.loads(RISK_PHASE4_FIXTURE.read_text(encoding="utf-8"))
+    fixture["tenant_id"] = tenant_id
+    fixture["analysis_id"] = f"analysis-{tenant_id.split('-')[-1]}"
+    snapshot = RiskGraphSnapshot.model_validate(fixture)
+    database_url = f"sqlite:///{tmp_path / f'{tenant_id}.db'}"
+    session_factory = create_session_factory(database_url)
+    with session_factory() as session:
+        session.add(
+            AttackPathAnalysis(
+                id=snapshot.analysis_id,
+                tenant_id=tenant_id,
+                actor_id="server-actor",
+                graph_fingerprint=snapshot.graph_fingerprint,
+                summary_json={"paths": [path.model_dump(mode="json") for path in snapshot.paths]},
+            )
+        )
+        session.commit()
+    metrics = MetricsRegistry()
+    return RiskPlanningService(session_factory, metrics=metrics, cache_ttl_seconds=30), metrics
+
+
+def test_policy_simulation_is_deterministic_sensitive_and_cached(tmp_path: Path) -> None:
+    service, metrics = _seed_phase4_snapshot(tmp_path)
+    request = RiskPolicySimulationRequest(analysis_id="analysis-a", blocked_technique_ids=["T1021"])
+
+    first = service.simulate(request, authorized_tenant_id="tenant-a")
+    second = service.simulate(request, authorized_tenant_id="tenant-a")
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert first.cache_key == second.cache_key
+    assert [item.simulated_score for item in first.score_diffs] == [21.0, 13.75]
+    assert first.blast_radius.affected_path_count == 2
+    assert first.blast_radius.affected_asset_ids == [
+        "asset-workstation-a",
+        "asset-domain-a",
+        "asset-server-a",
+    ]
+    assert first.query_cost.truncated is False
+    assert metrics.snapshot()["telemetry_counters"]["risk_query_requests_total"] == 2
+    assert metrics.snapshot()["telemetry_counters"]["risk_query_cache_hits_total"] == 1
+    prometheus = metrics.prometheus()
+    assert "tenant-a" not in prometheus
+    assert "analysis-a" not in prometheus
+
+
+def test_policy_simulation_is_tenant_safe_and_client_cannot_supply_snapshot(tmp_path: Path) -> None:
+    service, _metrics = _seed_phase4_snapshot(tmp_path)
+    with pytest.raises(RiskSnapshotNotFound):
+        service.simulate(
+            RiskPolicySimulationRequest(analysis_id="analysis-a", blocked_technique_ids=["T1021"]),
+            authorized_tenant_id="tenant-b",
+        )
+    with pytest.raises(ValidationError):
+        RiskPolicySimulationRequest.model_validate(
+            {
+                "analysis_id": "analysis-a",
+                "blocked_technique_ids": ["T1021"],
+                "snapshot": {"tenant_id": "tenant-b"},
+            }
+        )
+
+
+def test_policy_simulation_honors_path_and_traversal_bounds_and_invalidates_cache(tmp_path: Path) -> None:
+    service, metrics = _seed_phase4_snapshot(tmp_path)
+    bounded = service.simulate(
+        RiskPolicySimulationRequest(
+            analysis_id="analysis-a",
+            blocked_technique_ids=["T1021"],
+            max_paths=1,
+            max_traversal_steps=100,
+        ),
+        authorized_tenant_id="tenant-a",
+    )
+    assert bounded.query_cost.paths_considered == 1
+    assert bounded.query_cost.truncated is True
+    assert metrics.snapshot()["telemetry_counters"]["risk_query_truncated_total"] == 1
+
+    invalidation = service.invalidate(
+        tenant_id="tenant-a",
+        analysis_id="analysis-a",
+        graph_fingerprint="a" * 64,
+        reason="snapshot_changed",
+    )
+    assert invalidation.tenant_id == "tenant-a"
+    refreshed = service.simulate(
+        RiskPolicySimulationRequest(
+            analysis_id="analysis-a",
+            blocked_technique_ids=["T1021"],
+            max_paths=1,
+            max_traversal_steps=100,
+        ),
+        authorized_tenant_id="tenant-a",
+    )
+    assert refreshed.cache_hit is False
+
+
+def test_risk_simulation_api_uses_registered_tenant_snapshot() -> None:
+    from app.core.config import Settings
+    from app.main import create_app
+    from fastapi.testclient import TestClient
+
+    settings = Settings(
+        database_url=f"sqlite:////tmp/redpath-risk-simulation-{uuid4().hex}.db",
+        audit_log_path=f"/tmp/redpath-risk-simulation-{uuid4().hex}.jsonl",
+        auth_bootstrap_token="risk-simulation-bootstrap-token",
+    )
+    client = TestClient(create_app(settings))
+    bootstrap = client.post(
+        "/api/v1/auth/bootstrap",
+        json={
+            "bootstrap_token": settings.auth_bootstrap_token,
+            "tenant_slug": "risk-simulation",
+            "tenant_name": "Risk Simulation Test Tenant",
+            "username": "risk-simulation-admin",
+            "password": "risk-simulation-admin-password",
+        },
+    )
+    assert bootstrap.status_code == 201
+    headers = {"Authorization": f"Bearer {bootstrap.json()['access_token']}"}
+    tenant_id = client.get("/api/v1/auth/me", headers=headers).json()["tenant_id"]
+    analysis = client.post(
+        "/api/v1/attack-paths/analyze",
+        json=AttackPathAnalysisRequest(
+            tenant_id=tenant_id,
+            nodes=[node("entry", "Entry", entry=True), node("crown", "Crown", criticality=1.0, crown=True)],
+            edges=[edge("entry", "crown")],
+        ).model_dump(),
+        headers=headers,
+    )
+    assert analysis.status_code == 200
+
+    simulation = client.post(
+        "/api/v1/risk/simulate",
+        json={"analysis_id": analysis.json()["analysis_id"], "blocked_technique_ids": ["T1021.001"]},
+        headers=headers,
+    )
+    assert simulation.status_code == 200, simulation.text
+    assert simulation.json()["tenant_id"] == tenant_id
+    assert simulation.json()["blast_radius"]["affected_path_count"] == 1
+    score_diff = simulation.json()["score_diffs"][0]
+    assert score_diff["simulated_score"] < score_diff["baseline_score"]
+
+    missing = client.post(
+        "/api/v1/risk/simulate",
+        json={"analysis_id": "analysis-from-another-tenant"},
+        headers=headers,
+    )
+    assert missing.status_code == 404

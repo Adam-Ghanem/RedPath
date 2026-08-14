@@ -29,9 +29,14 @@ _TELEMETRY_COUNTER_NAMES = frozenset(
         "capacity_rejections_total",
         "freshness_slo_breaches_total",
         "fan_in_truncations_total",
+        "risk_query_requests_total",
+        "risk_query_cache_hits_total",
+        "risk_query_truncated_total",
     }
 )
-_TELEMETRY_GAUGE_NAMES = frozenset({"lag_seconds", "consecutive_failures", "dead_letter_count"})
+_TELEMETRY_GAUGE_NAMES = frozenset(
+    {"lag_seconds", "consecutive_failures", "dead_letter_count", "risk_query_last_duration_ms"}
+)
 def _safe_request_id(value: str | None) -> str:
     if value and _REQUEST_ID_PATTERN.fullmatch(value):
         return value
