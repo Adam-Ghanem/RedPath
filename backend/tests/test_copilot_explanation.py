@@ -1,21 +1,23 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from app.core.config import Settings
+from app.db.models import AttackPathAnalysis, EvidenceItem, Finding, create_session_factory
 from app.main import create_app
 from app.schemas.contracts import (
     CopilotAttackPathSummary,
     CopilotDetectionEvidence,
     CopilotExplainRequest,
     CopilotProviderOutput,
+    CopilotResolvedContext,
 )
-from app.services.copilot_explanation import (
-    CopilotExplanationService,
-    ProviderUnavailable,
-)
+from app.services.copilot_explanation import CopilotExplanationService, ProviderUnavailable
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 
 class RecordingProvider:
@@ -38,7 +40,7 @@ class FailingProvider:
         raise ProviderUnavailable("mock provider unavailable")
 
 
-def settings(*, enabled: bool = False) -> Settings:
+def service_settings(*, enabled: bool = False) -> Settings:
     return Settings(
         ai_features_enabled=enabled,
         ai_api_key="env-only-test-key",
@@ -48,36 +50,50 @@ def settings(*, enabled: bool = False) -> Settings:
     )
 
 
-def attack_path_request(
-    *,
-    asset_ids: list[str] | None = None,
-    evidence_ids: list[str] | None = None,
-    signal: str = "T1059 observed lateral movement",
-) -> CopilotExplainRequest:
-    return CopilotExplainRequest(
-        subject_type="attack_path",
-        subject_id="path-client-only",
-        title="Sensitive title should not leave the service",
+def resolved_finding(*, tenant_id: str = "tenant-a", source_id: str = "finding-a") -> CopilotResolvedContext:
+    return CopilotResolvedContext(
+        tenant_id=tenant_id,
+        source_type="finding",
+        source_id=source_id,
+        deterministic_score=25.0,
+        centrality=0.5,
+        deterministic_tier="low",
+        evidence=[
+            CopilotDetectionEvidence(
+                evidence_id="evidence-a",
+                severity="low",
+                technique_id="T1059",
+                signal="asset_id=asset-a host=db01.corp.local user=alice T1059 observed lateral movement",
+            )
+        ],
+    )
+
+
+def resolved_path(*, tenant_id: str = "tenant-a", source_id: str = "path-a") -> CopilotResolvedContext:
+    return CopilotResolvedContext(
+        tenant_id=tenant_id,
+        source_type="attack_path",
+        source_id=source_id,
         deterministic_score=82.0,
         centrality=0.85,
-        deterministic_tier="high",
+        deterministic_tier="critical",
         attack_path=CopilotAttackPathSummary(
             risk_score=82.0,
             centrality=0.85,
             hop_count=3,
-            asset_count=len(asset_ids or ["asset-a"]),
-            evidence_count=len(evidence_ids or ["evidence-a"]),
-            asset_ids=asset_ids or ["asset-a"],
-            evidence_ids=evidence_ids or ["evidence-a"],
+            asset_count=1,
+            evidence_count=1,
+            asset_ids=["asset-a"],
+            evidence_ids=["evidence-a"],
             technique_ids=["T1059"],
-            rationale=signal,
+            rationale="asset_id=asset-a hostname=db01.corp.local principal=alice T1059 lateral movement",
         ),
         evidence=[
             CopilotDetectionEvidence(
-                evidence_id=(evidence_ids or ["evidence-a"])[0],
-                severity="high",
+                evidence_id="evidence-a",
+                severity="critical",
                 technique_id="T1059",
-                signal=signal,
+                signal="asset_id=asset-a host=db01 user=alice password=secret 192.0.2.10 T1059",
             )
         ],
     )
@@ -85,14 +101,9 @@ def attack_path_request(
 
 def test_disabled_state_returns_deterministic_fallback_without_provider_call() -> None:
     provider = RecordingProvider()
-    service = CopilotExplanationService(settings(enabled=False), provider=provider)
+    service = CopilotExplanationService(service_settings(enabled=False), provider=provider)
 
-    result = service.explain(
-        attack_path_request(),
-        authorized_tenant_id="tenant-a",
-        authorized_asset_ids={"asset-a"},
-        authorized_evidence_ids={"evidence-a"},
-    )
+    result = service.explain(resolved_path(), authorized_tenant_id="tenant-a")
 
     assert result.ai_status == "disabled"
     assert result.fallback_reason == "ai_disabled"
@@ -102,14 +113,9 @@ def test_disabled_state_returns_deterministic_fallback_without_provider_call() -
 
 
 def test_provider_failure_returns_deterministic_fallback() -> None:
-    service = CopilotExplanationService(settings(enabled=True), provider=FailingProvider())
+    service = CopilotExplanationService(service_settings(enabled=True), provider=FailingProvider())
 
-    result = service.explain(
-        attack_path_request(),
-        authorized_tenant_id="tenant-a",
-        authorized_asset_ids={"asset-a"},
-        authorized_evidence_ids={"evidence-a"},
-    )
+    result = service.explain(resolved_path(), authorized_tenant_id="tenant-a")
 
     assert result.ai_status == "fallback"
     assert result.fallback_reason == "provider_unavailable"
@@ -117,29 +123,13 @@ def test_provider_failure_returns_deterministic_fallback() -> None:
     assert "unprovided facts cannot be asserted" in result.confidence_note
 
 
-def test_cache_is_tenant_scoped_and_does_not_share_identical_payloads() -> None:
+def test_cache_is_tenant_scoped_and_does_not_share_identical_context() -> None:
     provider = RecordingProvider()
-    service = CopilotExplanationService(settings(enabled=True), provider=provider)
-    request = attack_path_request()
+    service = CopilotExplanationService(service_settings(enabled=True), provider=provider)
 
-    first = service.explain(
-        request,
-        authorized_tenant_id="tenant-a",
-        authorized_asset_ids={"asset-a"},
-        authorized_evidence_ids={"evidence-a"},
-    )
-    second = service.explain(
-        request,
-        authorized_tenant_id="tenant-a",
-        authorized_asset_ids={"asset-a"},
-        authorized_evidence_ids={"evidence-a"},
-    )
-    other_tenant = service.explain(
-        request,
-        authorized_tenant_id="tenant-b",
-        authorized_asset_ids={"asset-a"},
-        authorized_evidence_ids={"evidence-a"},
-    )
+    first = service.explain(resolved_path(tenant_id="tenant-a"), authorized_tenant_id="tenant-a")
+    second = service.explain(resolved_path(tenant_id="tenant-a"), authorized_tenant_id="tenant-a")
+    other_tenant = service.explain(resolved_path(tenant_id="tenant-b"), authorized_tenant_id="tenant-b")
 
     assert first.cache_hit is False
     assert second.cache_hit is True
@@ -148,124 +138,214 @@ def test_cache_is_tenant_scoped_and_does_not_share_identical_payloads() -> None:
     assert len(provider.calls) == 2
 
 
-def test_cross_tenant_asset_or_evidence_reference_is_rejected() -> None:
-    service = CopilotExplanationService(settings(enabled=False))
+def test_service_rejects_context_for_another_authenticated_tenant() -> None:
+    service = CopilotExplanationService(service_settings(enabled=False))
 
-    with pytest.raises(PermissionError, match="assets outside"):
-        service.explain(
-            attack_path_request(asset_ids=["asset-other"]),
-            authorized_tenant_id="tenant-a",
-            authorized_asset_ids={"asset-a"},
-            authorized_evidence_ids={"evidence-a"},
-        )
-
-    with pytest.raises(PermissionError, match="evidence outside"):
-        service.explain(
-            attack_path_request(evidence_ids=["evidence-other"]),
-            authorized_tenant_id="tenant-a",
-            authorized_asset_ids={"asset-a"},
-            authorized_evidence_ids={"evidence-a"},
-        )
+    with pytest.raises(PermissionError, match="does not match authenticated tenant"):
+        service.explain(resolved_path(tenant_id="tenant-a"), authorized_tenant_id="tenant-b")
 
 
 def test_provider_context_is_minimized_and_identifier_free() -> None:
     provider = RecordingProvider()
-    service = CopilotExplanationService(settings(enabled=True), provider=provider)
-    request = attack_path_request(
-        signal=(
-            "asset_id=asset-a hostname=db01.corp.local host=db01 user=alice "
-            "username=alice account=alice principal=alice evidence_id=evidence-a "
-            "ip=192.0.2.10 password=secret T1059 observed lateral movement"
-        )
-    )
+    service = CopilotExplanationService(service_settings(enabled=True), provider=provider)
 
-    service.explain(
-        request,
-        authorized_tenant_id="tenant-a",
-        authorized_asset_ids={"asset-a"},
-        authorized_evidence_ids={"evidence-a"},
-    )
+    service.explain(resolved_path(), authorized_tenant_id="tenant-a")
 
     assert len(provider.calls) == 1
-    serialized = str(provider.calls[0])
-    sensitive_values = (
-        "path-client-only",
-        "Sensitive title",
+    serialized = json.dumps(provider.calls[0], sort_keys=True)
+    for sensitive in (
+        "path-a",
+        "finding-a",
         "asset-a",
         "evidence-a",
         "db01",
         "alice",
         "192.0.2.10",
         "secret",
-    )
-    for sensitive in sensitive_values:
+    ):
         assert sensitive not in serialized
     assert "T1059" in serialized
     assert "lateral" in serialized
 
 
-def test_risk_ai_assess_binds_references_to_authenticated_tenant(tmp_path: Path) -> None:
-    config = Settings(
-        database_url=f"sqlite:///{tmp_path / 'copilot-security.db'}",
-        audit_log_path=str(tmp_path / "copilot-security.jsonl"),
-        auth_bootstrap_token="copilot-security-token",
+def test_client_cannot_supply_deterministic_score_or_context() -> None:
+    with pytest.raises(ValidationError):
+        CopilotExplainRequest.model_validate(
+            {
+                "finding_id": "finding-a",
+                "deterministic_score": 100,
+                "deterministic_tier": "critical",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        CopilotExplainRequest.model_validate(
+            {
+                "analysis_id": "analysis-a",
+                "path_id": "path-a",
+                "asset_ids": ["asset-other"],
+            }
+        )
+
+
+def api_config(tmp_path: Path, name: str) -> Settings:
+    return Settings(
+        database_url=f"sqlite:///{tmp_path / f'{name}.db'}",
+        audit_log_path=str(tmp_path / f"{name}.jsonl"),
+        auth_bootstrap_token=f"{name}-token",
         ai_features_enabled=False,
     )
-    client = TestClient(create_app(config))
-    bootstrap = client.post(
+
+
+def bootstrap(client: TestClient, config: Settings, *, slug: str) -> dict[str, str]:
+    response = client.post(
         "/api/v1/auth/bootstrap",
         json={
             "bootstrap_token": config.auth_bootstrap_token,
-            "tenant_slug": "copilot-security",
-            "tenant_name": "Copilot Security Tenant",
-            "username": "copilot-security-admin",
-            "password": "copilot-security-password",
+            "tenant_slug": slug,
+            "tenant_name": f"{slug} Tenant",
+            "username": f"{slug}-admin",
+            "password": f"{slug}-password",
         },
     )
-    assert bootstrap.status_code == 201
-    headers = {"Authorization": f"Bearer {bootstrap.json()['access_token']}"}
+    assert response.status_code == 201
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def test_finding_source_is_server_resolved_and_score_tampering_is_rejected(tmp_path: Path) -> None:
+    config = api_config(tmp_path, "finding-source")
+    client = TestClient(create_app(config))
+    headers = bootstrap(client, config, slug="finding-source")
+    tenant_id = client.get("/api/v1/auth/me", headers=headers).json()["tenant_id"]
+    session_factory = create_session_factory(config.database_url)
+    with session_factory() as session:
+        session.add(
+            Finding(
+                id="finding-server",
+                tenant_id=tenant_id,
+                title="Modeled low finding",
+                description="Server-side finding description",
+                severity="low",
+                technique_id="T1059",
+                cvss_score=1.0,
+                evidence={"evidence_ids": ["evidence-server"]},
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        session.add(
+            EvidenceItem(
+                id="evidence-server",
+                tenant_id=tenant_id,
+                evidence_type="fixture",
+                source="authorized-fixture",
+                title="Reviewed evidence",
+                sha256="0" * 64,
+                technique_id="T1059",
+                review_status="accepted",
+                notes="bounded metadata",
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        session.commit()
+
     response = client.post(
         "/api/v1/risk/ai-assess",
-        json=attack_path_request(asset_ids=["asset-other"], evidence_ids=["evidence-other"]).model_dump(),
+        json={"finding_id": "finding-server"},
         headers=headers,
     )
+    assert response.status_code == 200
+    assert response.json()["deterministic_score"] == 25.0
+    assert response.json()["deterministic_tier"] == "low"
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Insufficient authorization"
-
-
-def test_copilot_api_is_protected_and_disabled_by_default(tmp_path: Path) -> None:
-    config = Settings(
-        database_url=f"sqlite:///{tmp_path / 'copilot-disabled.db'}",
-        audit_log_path=str(tmp_path / "copilot-disabled.jsonl"),
-        auth_bootstrap_token="copilot-disabled-token",
-    )
-    client = TestClient(create_app(config))
-    unauthenticated = client.post("/api/v1/copilot/explain", json={})
-    assert unauthenticated.status_code == 401
-
-    bootstrap = client.post(
-        "/api/v1/auth/bootstrap",
+    tampered = client.post(
+        "/api/v1/risk/ai-assess",
         json={
-            "bootstrap_token": config.auth_bootstrap_token,
-            "tenant_slug": "copilot-disabled",
-            "tenant_name": "Copilot Disabled Tenant",
-            "username": "copilot-disabled-admin",
-            "password": "copilot-disabled-password",
+            "finding_id": "finding-server",
+            "deterministic_score": 100,
+            "deterministic_tier": "critical",
         },
+        headers=headers,
     )
-    headers = {"Authorization": f"Bearer {bootstrap.json()['access_token']}"}
+    assert tampered.status_code == 422
+
+
+def test_cross_tenant_and_nonexistent_sources_return_safe_not_found(tmp_path: Path) -> None:
+    config = api_config(tmp_path, "source-boundary")
+    client = TestClient(create_app(config))
+    headers = bootstrap(client, config, slug="source-boundary")
+    session_factory = create_session_factory(config.database_url)
+    with session_factory() as session:
+        session.add(
+            Finding(
+                id="finding-other",
+                tenant_id="tenant-other",
+                title="Other tenant finding",
+                description="Should not resolve",
+                severity="critical",
+                evidence={},
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        session.add(
+            AttackPathAnalysis(
+                id="analysis-other",
+                tenant_id="tenant-other",
+                actor_id="other-user",
+                graph_fingerprint="f" * 64,
+                summary_json={"paths": [{"path_id": "path-other", "risk_score": 95}]},
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        session.commit()
+
+    for payload in (
+        {"finding_id": "finding-other"},
+        {"finding_id": "finding-missing"},
+        {"analysis_id": "analysis-other", "path_id": "path-other"},
+        {"analysis_id": "analysis-missing", "path_id": "path-missing"},
+    ):
+        response = client.post("/api/v1/risk/ai-assess", json=payload, headers=headers)
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Resource not found"
+
+
+def test_registered_path_source_uses_server_score_not_client_context(tmp_path: Path) -> None:
+    config = api_config(tmp_path, "path-source")
+    client = TestClient(create_app(config))
+    headers = bootstrap(client, config, slug="path-source")
+    tenant_id = client.get("/api/v1/auth/me", headers=headers).json()["tenant_id"]
+    session_factory = create_session_factory(config.database_url)
+    with session_factory() as session:
+        session.add(
+            AttackPathAnalysis(
+                id="analysis-server",
+                tenant_id=tenant_id,
+                actor_id="server-user",
+                graph_fingerprint="a" * 64,
+                summary_json={
+                    "paths": [
+                        {
+                            "path_id": "path-server",
+                            "risk_score": 25.0,
+                            "centrality": 0.1,
+                            "asset_ids": [],
+                            "evidence_ids": [],
+                            "technique_ids": ["T1059"],
+                            "rationale": "server-derived modeled path",
+                        }
+                    ]
+                },
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        session.commit()
+
     response = client.post(
-        "/api/v1/copilot/explain",
-        json=CopilotExplainRequest(
-            subject_type="finding",
-            subject_id="finding-1",
-            deterministic_score=40,
-            deterministic_tier="medium",
-        ).model_dump(),
+        "/api/v1/risk/ai-assess",
+        json={"analysis_id": "analysis-server", "path_id": "path-server"},
         headers=headers,
     )
 
     assert response.status_code == 200
-    assert response.json()["ai_status"] == "disabled"
-    assert response.json()["data_egress"] == "none"
+    assert response.json()["deterministic_score"] == 25.0
+    assert response.json()["deterministic_tier"] == "low"

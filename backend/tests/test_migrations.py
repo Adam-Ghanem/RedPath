@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.db.models import Campaign, create_session_factory
+from app.db.models import Campaign, create_session_factory, run_alembic_downgrade, run_alembic_migrations
 from sqlalchemy import create_engine, inspect, text
 
 
@@ -39,3 +39,17 @@ def test_additive_migration_backfills_legacy_tenant(tmp_path: Path) -> None:
         row = session.get(Campaign, "legacy-campaign")
         assert row is not None
         assert row.tenant_id == "legacy"
+
+
+def test_attack_path_analysis_alembic_upgrade_downgrade_reupgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'attack-path-lifecycle.db'}"
+    run_alembic_migrations(database_url)
+    engine = create_engine(database_url)
+    assert "attack_path_analyses" in inspect(engine).get_table_names()
+
+    run_alembic_downgrade(database_url, "d5824340cb21")
+    assert "attack_path_analyses" not in inspect(engine).get_table_names()
+
+    run_alembic_migrations(database_url)
+    run_alembic_migrations(database_url)
+    assert "attack_path_analyses" in inspect(engine).get_table_names()

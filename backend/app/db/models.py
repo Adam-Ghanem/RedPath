@@ -164,6 +164,17 @@ class GraphEdge(Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
 
 
+class AttackPathAnalysis(Base):
+    __tablename__ = "attack_path_analyses"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    actor_id: Mapped[str] = mapped_column(String(128))
+    graph_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Campaign(Base):
     __tablename__ = "campaigns"
 
@@ -370,13 +381,22 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-def run_alembic_migrations(database_url: str) -> None:
-    """Upgrade the configured database through RedPath's sole Alembic revision chain."""
+def _alembic_config(database_url: str) -> Config:
     backend_root = Path(__file__).resolve().parents[2]
     config = Config(str(backend_root / "alembic.ini"))
     config.set_main_option("script_location", str(backend_root / "alembic"))
     config.attributes["database_url"] = database_url
-    command.upgrade(config, "head")
+    return config
+
+
+def run_alembic_migrations(database_url: str, target: str = "head") -> None:
+    """Upgrade the configured database through RedPath's sole Alembic revision chain."""
+    command.upgrade(_alembic_config(database_url), target)
+
+
+def run_alembic_downgrade(database_url: str, target: str = "base") -> None:
+    """Downgrade only through Alembic for lifecycle checks and controlled rollback."""
+    command.downgrade(_alembic_config(database_url), target)
 
 
 def create_session_factory(database_url: str):

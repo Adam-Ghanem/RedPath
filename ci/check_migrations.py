@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, inspect, text
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from app.db.models import Base, run_alembic_migrations  # noqa: E402
+from app.db.models import Base, run_alembic_downgrade, run_alembic_migrations  # noqa: E402
 
 MIGRATIONS_DIR = REPO_ROOT / "backend" / "alembic" / "versions"
 
@@ -30,6 +30,7 @@ TENANT_TABLES = (
     "purple_runs",
     "detection_observations",
     "audit_events",
+    "attack_path_analyses",
 )
 
 
@@ -50,9 +51,16 @@ def validate_migrations() -> None:
         database_url = f"sqlite:///{database_path}"
         run_alembic_migrations(database_url)
         run_alembic_migrations(database_url)
+        run_alembic_downgrade(database_url, "d5824340cb21")
+        downgraded_engine = create_engine(database_url)
+        downgraded_tables = set(inspect(downgraded_engine).get_table_names())
+        if "attack_path_analyses" in downgraded_tables:
+            raise RuntimeError("Alembic downgrade did not remove attack_path_analyses")
+        run_alembic_migrations(database_url)
+        run_alembic_migrations(database_url)
         engine = create_engine(database_url)
-
         inspector = inspect(engine)
+
         tables = set(inspector.get_table_names())
         required_tables = set(Base.metadata.tables) | {"alembic_version"}
         missing_tables = sorted(required_tables - tables)
@@ -84,7 +92,10 @@ def validate_migrations() -> None:
 def main() -> int:
     validate_alembic_revisions()
     validate_migrations()
-    print("Migration checks passed: Alembic schema is tenant-scoped and idempotent.")
+    print(
+        "Migration checks passed: upgrade=ok, downgrade=ok, re-upgrade=ok, "
+        "Alembic schema is tenant-scoped and idempotent."
+    )
     return 0
 
 

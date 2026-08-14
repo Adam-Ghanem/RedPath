@@ -4,7 +4,7 @@ from datetime import datetime
 from string import hexdigits
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator
+from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress, field_validator, model_validator
 
 from app.models.domain import Asset as SharedAsset
 from app.models.telemetry import TelemetryEvent
@@ -291,13 +291,35 @@ class CopilotAttackPathSummary(BaseModel):
 
 
 class CopilotExplainRequest(BaseModel):
-    """Client-supplied sanitized context; tenant and actor come from the server session."""
+    """Identifier-only client request; all score and evidence context is server-resolved."""
 
     model_config = ConfigDict(extra="forbid")
 
-    subject_type: Literal["finding", "attack_path"]
-    subject_id: str = Field(min_length=1, max_length=128)
-    title: str = Field(default="", max_length=256)
+    finding_id: str | None = Field(default=None, min_length=1, max_length=128)
+    analysis_id: str | None = Field(default=None, min_length=1, max_length=128)
+    path_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_source_reference(self) -> "CopilotExplainRequest":
+        finding_only = bool(self.finding_id) and not self.analysis_id and not self.path_id
+        path_only = bool(self.analysis_id and self.path_id) and not self.finding_id
+        if not (finding_only or path_only):
+            raise ValueError("request must contain only finding_id or analysis_id plus path_id")
+        return self
+
+    @property
+    def source_type(self) -> Literal["finding", "attack_path"]:
+        return "finding" if self.finding_id else "attack_path"
+
+
+class CopilotResolvedContext(BaseModel):
+    """Server-derived deterministic source context; never accepted directly from clients."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(min_length=1, max_length=128)
+    source_type: Literal["finding", "attack_path"]
+    source_id: str = Field(min_length=1, max_length=128)
     deterministic_score: float = Field(ge=0, le=100)
     centrality: float = Field(default=0.0, ge=0, le=1)
     deterministic_tier: Literal["low", "medium", "high", "critical"]

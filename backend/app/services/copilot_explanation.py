@@ -14,9 +14,9 @@ import httpx
 
 from app.core.config import Settings
 from app.schemas.contracts import (
-    CopilotExplainRequest,
     CopilotExplanationResponse,
     CopilotProviderOutput,
+    CopilotResolvedContext,
 )
 
 
@@ -237,20 +237,20 @@ class CopilotExplanationService:
         return " ".join(safe_tokens[:16]) or "sanitized evidence signal"
 
     @classmethod
-    def _minimized_context(cls, request: CopilotExplainRequest) -> dict[str, Any]:
-        path = request.attack_path
+    def _minimized_context(cls, source: CopilotResolvedContext) -> dict[str, Any]:
+        path = source.attack_path
         context: dict[str, Any] = {
-            "subject_type": request.subject_type,
-            "deterministic_score": round(request.deterministic_score, 4),
-            "centrality": round(request.centrality, 4),
-            "deterministic_tier": request.deterministic_tier,
+            "source_type": source.source_type,
+            "deterministic_score": round(source.deterministic_score, 4),
+            "centrality": round(source.centrality, 4),
+            "deterministic_tier": source.deterministic_tier,
             "evidence": [
                 {
                     "severity": evidence.severity,
                     "technique_id": evidence.technique_id,
                     "signal": cls._safe_evidence_basis(evidence.signal),
                 }
-                for evidence in request.evidence
+                for evidence in source.evidence
             ],
         }
         if path is not None:
@@ -273,11 +273,11 @@ class CopilotExplanationService:
         return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
-    def _fallback_text(request: CopilotExplainRequest, tier: str) -> tuple[str, list[str], str]:
+    def _fallback_text(source: CopilotResolvedContext, tier: str) -> tuple[str, list[str], str]:
         explanation = (
-            f"The deterministic risk tier is {tier} at {request.deterministic_score:.1f}/100. "
-            "This result uses only the supplied sanitized score, centrality, and bounded evidence.\n\n"
-            "No additional facts can be asserted without supporting evidence in the request."
+            f"The deterministic risk tier is {tier} at {source.deterministic_score:.1f}/100. "
+            "This result uses only the server-resolved deterministic score, centrality, and bounded evidence.\n\n"
+            "No additional facts can be asserted without supporting evidence in the registered source."
         )
         actions = [
             "Review the bounded evidence and confirm the deterministic priority in the authorized case workflow.",
@@ -286,46 +286,21 @@ class CopilotExplanationService:
         confidence = "Deterministic-only fallback; no model output was used, and unprovided facts cannot be asserted."
         return explanation, actions, confidence
 
-    @staticmethod
-    def _validate_references(
-        request: CopilotExplainRequest,
-        *,
-        authorized_asset_ids: set[str] | None,
-        authorized_evidence_ids: set[str] | None,
-    ) -> None:
-        if request.subject_type == "attack_path" and request.attack_path is None:
-            raise ValueError("attack_path context is required for an attack_path subject")
-        path = request.attack_path
-        requested_assets = set(path.asset_ids if path else [])
-        requested_evidence = set(path.evidence_ids if path else [])
-        requested_evidence.update(evidence.evidence_id for evidence in request.evidence)
-        if request.subject_type == "attack_path" and not (requested_assets or requested_evidence):
-            raise PermissionError("AI assessment requires a tenant-authorized asset or evidence reference")
-        if authorized_asset_ids is not None and not requested_assets <= authorized_asset_ids:
-            raise PermissionError("AI assessment references assets outside the authenticated tenant")
-        if authorized_evidence_ids is not None and not requested_evidence <= authorized_evidence_ids:
-            raise PermissionError("AI assessment references evidence outside the authenticated tenant")
-
     def explain(
         self,
-        request: CopilotExplainRequest,
+        source: CopilotResolvedContext,
         *,
         authorized_tenant_id: str,
-        authorized_asset_ids: set[str] | None = None,
-        authorized_evidence_ids: set[str] | None = None,
     ) -> CopilotExplanationResponse:
-        self._validate_references(
-            request,
-            authorized_asset_ids=authorized_asset_ids,
-            authorized_evidence_ids=authorized_evidence_ids,
-        )
-        context = self._minimized_context(request)
+        if source.tenant_id != authorized_tenant_id:
+            raise PermissionError("AI source does not match authenticated tenant")
+        context = self._minimized_context(source)
         context_hash = self._context_hash(authorized_tenant_id, context)
         cached = self._cache.get(context_hash)
         if cached is not None:
             return cached.model_copy(update={"cache_hit": True})
-        tier = self._tier(request.deterministic_score, request.centrality, request.deterministic_tier)
-        explanation, actions, confidence = self._fallback_text(request, tier)
+        tier = self._tier(source.deterministic_score, source.centrality, source.deterministic_tier)
+        explanation, actions, confidence = self._fallback_text(source, tier)
         ai_status = "disabled"
         fallback_reason = "ai_disabled"
         data_egress = "none"
@@ -356,10 +331,10 @@ class CopilotExplanationService:
                 ai_status = "fallback"
         response = CopilotExplanationResponse(
             tenant_id=authorized_tenant_id,
-            subject_type=request.subject_type,
-            subject_id=request.subject_id,
-            deterministic_score=request.deterministic_score,
-            deterministic_tier=request.deterministic_tier,
+            subject_type=source.source_type,
+            subject_id=source.source_id,
+            deterministic_score=source.deterministic_score,
+            deterministic_tier=source.deterministic_tier,
             tier=tier,
             explanation=explanation,
             next_actions=actions,

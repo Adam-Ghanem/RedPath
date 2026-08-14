@@ -113,6 +113,7 @@ from app.services.attack_path_risk import analyze_attack_path_risk, to_persisten
 from app.services.case_governance import list_governance_history
 from app.services.case_ops import list_cases, update_case_status
 from app.services.copilot_explanation import build_copilot_service
+from app.services.copilot_sources import CopilotSourceNotFound, register_attack_path_analysis, resolve_copilot_source
 from app.services.correlation import correlate_findings
 from app.services.detection_framework import DetectionRuleCatalog
 from app.services.discovery_jobs import (
@@ -203,32 +204,19 @@ def build_router(
             enriched.setdefault("tenant_id", principal.tenant_id)
         return audit.record(operation, enriched, actor=actor or current_actor())
 
-    def authorized_ai_reference_ids(principal: object) -> tuple[set[str], set[str]]:
-        tenant_id = getattr(principal, "tenant_id", "")
-        with session_factory() as session:
-            asset_ids = {
-                asset_id for (asset_id,) in session.query(Asset.id).filter(Asset.tenant_id == tenant_id).all()
-            }
-            evidence_ids = {
-                evidence_id
-                for (evidence_id,) in session.query(EvidenceItem.id)
-                .filter(EvidenceItem.tenant_id == tenant_id)
-                .all()
-            }
-        return asset_ids, evidence_ids
-
     def assess_with_copilot(request: CopilotExplainRequest) -> CopilotExplanationResponse:
         principal = get_principal()
-        authorized_asset_ids, authorized_evidence_ids = authorized_ai_reference_ids(principal)
         try:
-            return copilot_service.explain(
+            source = resolve_copilot_source(
                 request,
-                authorized_tenant_id=principal.tenant_id,
-                authorized_asset_ids=authorized_asset_ids,
-                authorized_evidence_ids=authorized_evidence_ids,
+                tenant_id=principal.tenant_id,
+                session_factory=session_factory,
             )
+            return copilot_service.explain(source, authorized_tenant_id=principal.tenant_id)
+        except CopilotSourceNotFound as exc:
+            raise HTTPException(status_code=404, detail="requested AI source was not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=403, detail="requested AI source is not authorized") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1312,6 +1300,12 @@ def build_router(
                 authorized_evidence_ids=authorized_evidence_ids,
             )
             persistence_record = to_persistence_record(result, actor_id=principal.user_id)
+            register_attack_path_analysis(
+                result,
+                tenant_id=principal.tenant_id,
+                actor_id=principal.user_id,
+                session_factory=session_factory,
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
