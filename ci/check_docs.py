@@ -29,12 +29,23 @@ REQUIRED_FILES = (
     REPO_ROOT / "docs" / "branch-protection.md",
     REPO_ROOT / "docs" / "ci-setup.md",
     REPO_ROOT / "docs" / "database.md",
+    REPO_ROOT / "docs" / "migrations.md",
     REPO_ROOT / "docs" / "backup-restore-drill.md",
+    REPO_ROOT / "docs" / "incident-drills.md",
     REPO_ROOT / "docs" / "release-operations.md",
+    REPO_ROOT / "docs" / "slo-reporting.md",
     REPO_ROOT / "ci" / "quality-gate.sh",
     REPO_ROOT / "ci" / "release-verify.sh",
     REPO_ROOT / "ci" / "release_verify.py",
+    REPO_ROOT / "ci" / "check_environment.py",
     REPO_ROOT / "ci" / "check_migrations.py",
+    REPO_ROOT / "ci" / "migration_rehearsal.py",
+    REPO_ROOT / "ci" / "verify_backup.py",
+    REPO_ROOT / "ci" / "incident_drill.py",
+    REPO_ROOT / "ci" / "report_slo.py",
+    REPO_ROOT / "ci" / "release_evidence.py",
+    REPO_ROOT / "ci" / "check_provenance.py",
+    REPO_ROOT / "ci" / "fixtures" / "slo-sample.json",
 )
 REQUIRED_COMMANDS = (
     "./ci/quality-gate.sh",
@@ -42,6 +53,13 @@ REQUIRED_COMMANDS = (
     "python ci/check_migrations.py",
     "python ci/check_docs.py",
     "python ci/release_verify.py",
+    "python ci/check_environment.py --profile lab",
+    "python ci/migration_rehearsal.py",
+    "python ci/verify_backup.py --self-test",
+    "python ci/incident_drill.py --all --json",
+    "python ci/report_slo.py --input ci/fixtures/slo-sample.json --json",
+    "python ci/release_evidence.py --output release-evidence.json",
+    "python ci/check_provenance.py release-evidence.json",
 )
 
 

@@ -40,3 +40,17 @@ pytest -q backend/tests/test_migrations.py backend/tests/test_kernel_contracts.p
 Reliability changes that add or alter a database table, column, or index must include an Alembic revision, downgrade function, migration-contract test coverage, and a documented maintenance-window rollback. The inventory reliability revision is validated by the same migration and application gates above; no legacy SQL migration artifact is added.
 
 The evidence-governance change adds one Alembic revision and focused upgrade/downgrade/re-upgrade coverage. Future persistence changes must add their own additive revision and update migration tests before merge.
+
+The platform contract and release-assurance changes do not add or alter a database table, column, index, or migration artifact. Their contribution is the validation and rollback backbone above, together with compatibility tests for versioned contracts and bounded cursors.
+
+## Release rehearsal
+
+The release assurance workflow runs the isolated rehearsal command:
+
+```bash
+PYTHONPATH=backend python ci/migration_rehearsal.py
+```
+
+It upgrades an empty temporary SQLite database twice, downgrades to the reviewed `d5824340cb21` target, verifies the expected table removal, then re-upgrades twice and checks the Alembic head, tenant backfill, audit table, and tenant-scoped schema. It never opens or mutates a project database.
+
+This release-assurance change adds no table, column, index, Alembic revision, or data transformation. Its rollback is a source-control revert of the release scripts and documents. If a future persistence change is added, the release candidate must include an Alembic `upgrade head` result, a tested `alembic downgrade` or compatible compensating migration, a backup/snapshot prerequisite, and isolated tenant/RBAC/audit/privacy verification before promotion.

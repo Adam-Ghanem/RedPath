@@ -42,3 +42,11 @@ When audit-chain verification fails, preserve the evidence files read-only, reco
 Rollback means selecting a previously verified immutable application artifact through the protected deployment process. It does not mean deleting data, rewriting audit history, mutating external SIEM or directory state, or running an ad hoc shell command. Database changes require a reviewed forward migration and a compatible rollback or restore plan before promotion. If a migration cannot be safely reversed, pause the release and restore an isolated copy for analysis rather than changing the production source in place.
 
 Every incident record should include the exact release identifier, check results, start and end times, safe correlation identifiers, affected service surface, decision owner, and follow-up action. Do not include secrets, raw telemetry, packet captures, credentials, or customer data in the incident record.
+
+## Candidate evidence and recovery assurance
+
+A release candidate should carry an evidence manifest generated from the exact checked-out commit. The manifest records only approved file paths and SHA-256 digests, verification commands, and names of SBOM/dependency artifacts. Validate it with `PYTHONPATH=backend python ci/check_provenance.py release-evidence.json`. The manifest is evidence, not a deployment instruction, and must not include secrets or raw operational payloads.
+
+The release evidence workflow also runs `PYTHONPATH=backend python ci/migration_rehearsal.py`, `PYTHONPATH=backend python ci/check_environment.py --profile lab`, `PYTHONPATH=backend python ci/verify_backup.py --self-test`, `PYTHONPATH=backend python ci/incident_drill.py --all`, and the aggregate SLO report described in [`docs/slo-reporting.md`](slo-reporting.md). The recovery drill remains isolated and approval-gated; a rehearsal or report never authorizes production cutover.
+
+The incident scenarios and stop conditions are documented in [`docs/incident-drills.md`](incident-drills.md). An exhausted error budget pauses promotion. A provenance mismatch, migration downgrade failure, environment safety failure, tenant/RBAC boundary failure, audit-integrity failure, or backup digest failure is a release blocker until reviewed.

@@ -62,3 +62,23 @@ Use environment-scoped credentials only in a separately reviewed deployment work
 The backend image runs as UID/GID `10001`, does not retain pip caches, includes a liveness health check, and exposes only port `8000`. The demo console is built in a separate Node stage and served by the unprivileged nginx image on port `8080`. The Compose demo profile makes both services read-only, drops all Linux capabilities, enables `no-new-privileges`, limits process and memory counts, and allocates writable storage only for the API’s SQLite/audit data and required nginx temporary paths. The demo API also hard-codes dry-run mode and documentation-safe CIDRs.
 
 These defaults are defense-in-depth rather than a substitute for server-side authorization, tenant isolation, server-derived actor identity, audit integrity, privacy redaction, or network policy. Production deployments should provide an authenticated ingress, TLS, a managed database, a secret manager, and a dedicated metrics collector.
+
+## Release-candidate evidence and recovery assurance
+
+The release-assurance job produces a commit-bound evidence manifest, dependency/SBOM references, environment-check output, migration rehearsal output, backup-verification output, incident-drill output, and aggregate SLO/error-budget output. These artifacts are validation evidence only and must be reviewed before any manual, approval-gated promotion.
+
+Run the deterministic local assurance commands from the repository root:
+
+```bash
+PYTHONPATH=backend python ci/check_environment.py --profile lab
+PYTHONPATH=backend python ci/migration_rehearsal.py
+PYTHONPATH=backend python ci/verify_backup.py --self-test
+PYTHONPATH=backend python ci/incident_drill.py --all --json
+PYTHONPATH=backend python ci/report_slo.py --input ci/fixtures/slo-sample.json --json
+PYTHONPATH=backend python ci/release_evidence.py --output release-evidence.json
+PYTHONPATH=backend python ci/check_provenance.py release-evidence.json
+```
+
+The environment check reads configuration through the existing settings contract and never prints secret values. The migration rehearsal uses a temporary SQLite database and exercises upgrade, downgrade, and re-upgrade; it does not alter a project database. The backup verifier checks an approved manifest or a synthetic fixture without restoring, deleting, or contacting a remote service. Incident drills validate safe-failure decisions only. SLO reporting consumes aggregate counters with bounded windows and samples. The evidence generator records file digests and artifact names for the exact checked-out commit.
+
+When a persistence change is introduced, the release record must name the Alembic revision, forward command, downgrade target or compatible compensating migration, backup/snapshot prerequisite, tenant/RBAC/privacy checks, and tested rollback or isolated restore result. This Phase 4 release-assurance change adds no persistence schema or migration.

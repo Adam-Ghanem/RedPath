@@ -33,3 +33,19 @@ A drill passes only when the destination is isolated, the exact backup package i
 ## Rollback and migration note
 
 This release-assurance change does not alter application persistence schemas or add migrations. Its rollback is a source-control rollback to the prior release-verification documentation and scripts. If a future release includes a schema migration, the release record must include a reviewed forward migration, a tested compatible rollback or isolated restore procedure, and the migration verification result before promotion.
+
+## Verification command
+
+The local synthetic contract can be checked without touching any external system:
+
+```bash
+PYTHONPATH=backend python ci/verify_backup.py --self-test
+```
+
+For an approved manifest, provide a read-only manifest and an isolated verification root:
+
+```bash
+PYTHONPATH=backend python ci/verify_backup.py --manifest /approved/manifest.json --root /isolated/restore-root
+```
+
+The verifier checks relative paths, SHA-256 digests, tenant-scope confirmation, audit-integrity confirmation, and redaction metadata. It never performs the restore, deletes a source, changes a database, or contacts a remote service. A failed digest or invariant blocks cutover and leaves the source unchanged.

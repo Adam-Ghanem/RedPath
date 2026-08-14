@@ -28,6 +28,13 @@ printf '%s\n' '== Release verification =='
   PYTHONPATH=backend python ci/check_migrations.py
   PYTHONPATH=backend python ci/check_docs.py
   PYTHONPATH=backend python ci/release_verify.py
+  PYTHONPATH=backend python ci/check_environment.py --profile lab
+  PYTHONPATH=backend python ci/migration_rehearsal.py
+  PYTHONPATH=backend python ci/verify_backup.py --self-test
+  PYTHONPATH=backend python ci/incident_drill.py --all --json >/tmp/redpath-incident-drills.json
+  PYTHONPATH=backend python ci/report_slo.py --input ci/fixtures/slo-sample.json --json >/tmp/redpath-slo-report.json
+  PYTHONPATH=backend python ci/release_evidence.py --output /tmp/redpath-release-evidence.json
+  PYTHONPATH=backend python ci/check_provenance.py /tmp/redpath-release-evidence.json
 )
 
 printf '%s\n' '== Repository: whitespace, compose, secret patterns =='

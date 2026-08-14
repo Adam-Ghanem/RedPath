@@ -198,11 +198,63 @@ jobs:
             sbom-backend.spdx.json
             sbom-frontend.spdx.json
 
+  release_assurance:
+    name: Release assurance and recovery evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [migration_docs, repository, dependency_review]
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install --requirement backend/requirements.txt
+      - name: Check lab environment defaults
+        run: PYTHONPATH=backend python ci/check_environment.py --profile lab
+      - name: Rehearse Alembic lifecycle in temporary database
+        run: PYTHONPATH=backend python ci/migration_rehearsal.py | tee migration-rehearsal.txt
+      - name: Verify synthetic backup manifest
+        run: PYTHONPATH=backend python ci/verify_backup.py --self-test | tee backup-verification.txt
+      - name: Validate incident drill matrix
+        run: PYTHONPATH=backend python ci/incident_drill.py --all --json > incident-drills.json
+      - name: Generate SLO and error-budget report
+        run: PYTHONPATH=backend python ci/report_slo.py --input ci/fixtures/slo-sample.json --json > slo-report.json
+      - name: Generate release-candidate evidence manifest
+        run: PYTHONPATH=backend python ci/release_evidence.py --output release-evidence.json
+      - name: Check release-candidate provenance
+        run: PYTHONPATH=backend python ci/check_provenance.py release-evidence.json
+      - name: Download dependency and SBOM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: redpath-dependency-review-${{ github.sha }}
+          path: dependency-artifacts
+      - name: Re-check SBOM and dependency artifact provenance
+        run: PYTHONPATH=backend python ci/check_provenance.py release-evidence.json --artifact-root dependency-artifacts
+      - name: Upload release assurance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: redpath-release-assurance-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            release-evidence.json
+            migration-rehearsal.txt
+            backup-verification.txt
+            incident-drills.json
+            slo-report.json
+
   containers:
     name: Container build and vulnerability gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [backend, frontend, migration_docs, repository, dependency_review]
+    needs: [backend, frontend, migration_docs, repository, dependency_review, release_assurance]
     permissions:
       contents: read
       security-events: write
@@ -234,7 +286,7 @@ jobs:
     name: Release verification
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [backend, frontend, migration_docs, repository, dependency_review, containers]
+    needs: [backend, frontend, migration_docs, repository, dependency_review, release_assurance, containers]
     steps:
       - name: Check out source
         uses: actions/checkout@v4

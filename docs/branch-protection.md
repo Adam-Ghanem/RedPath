@@ -17,10 +17,11 @@ The required status checks should include the exact checks below. A check is req
 | `Migration and documentation consistency` | Additive migration check, focused regression tests, links, API paths, and public naming |
 | `Repository quality gates` | Whitespace, tracked secret-pattern scan, Compose validation, and Dockerfile linting |
 | `SBOM and dependency review` | SPDX SBOM artifacts and pull-request dependency review |
+| `Release assurance and recovery evidence` | Environment safety, migration rehearsal, backup verification, incident drills, SLO/error-budget report, evidence manifest, and provenance |
 | `Container build and vulnerability gate` | Reproducible image builds and High/Critical vulnerability gate |
 | `Release verification` | Required release files, secure runtime defaults, operational docs, and safe-failure controls |
 
-Require CI artifacts to be retained according to repository policy, including the backend and frontend dependency reports, SPDX SBOMs, migration/docs output, release verification output, and container scan results. Do not treat an artifact as a secret store; reports must exclude credentials, raw telemetry, packet bytes, customer data, and unredacted identifiers.
+Require CI artifacts to be retained according to repository policy, including the backend and frontend dependency reports, SPDX SBOMs, migration/docs output, release-assurance evidence, recovery/drill/SLO reports, release verification output, and container scan results. Do not treat an artifact as a secret store; reports must exclude credentials, raw telemetry, packet bytes, customer data, and unredacted identifiers.
 
 ## Release checklist
 
@@ -49,4 +50,9 @@ When Docker is unavailable, run the focused non-container checks separately and 
 PYTHONPATH=backend python ci/check_migrations.py
 PYTHONPATH=backend python ci/check_docs.py
 PYTHONPATH=backend python ci/release_verify.py
+PYTHONPATH=backend python ci/check_environment.py --profile lab
+PYTHONPATH=backend python ci/migration_rehearsal.py
+PYTHONPATH=backend python ci/verify_backup.py --self-test
+PYTHONPATH=backend python ci/incident_drill.py --all --json
+PYTHONPATH=backend python ci/report_slo.py --input ci/fixtures/slo-sample.json --json
 ```

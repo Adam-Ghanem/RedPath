@@ -69,3 +69,7 @@ Every pull request should briefly state the defensive problem addressed, the val
 ## Reporting issues responsibly
 
 If you identify a vulnerability in RedPath rather than a lab finding that the product models, do not publish sensitive details in a public issue. Use the repository’s private security reporting channel if available, or contact the maintainer directly with a minimal, reproducible description.
+
+## Release-candidate evidence
+
+For release-facing changes, run the focused assurance commands in [`docs/ci-setup.md`](docs/ci-setup.md), review the generated evidence manifest and SBOM/dependency artifacts, and report any environment or Docker limitation rather than weakening the hosted gate. If persistence changes, name the Alembic revision, upgrade path, downgrade or compensating migration, backup prerequisite, tenant/RBAC/privacy checks, and isolated restore result. The release-assurance changes themselves add no persistence schema or migration.

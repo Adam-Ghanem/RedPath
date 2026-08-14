@@ -53,10 +53,20 @@ def validate_workflow() -> None:
             "repository:",
             "containers:",
             "dependency_review:",
+            "release_assurance:",
             "release_verify:",
             "actions/upload-artifact@v4",
+            "actions/download-artifact@v4",
             "actions/dependency-review-action@v4",
             "anchore/sbom-action@v0.18.0",
+            "check_environment.py --profile lab",
+            "migration_rehearsal.py",
+            "verify_backup.py --self-test",
+            "incident_drill.py --all --json",
+            "report_slo.py --input ci/fixtures/slo-sample.json --json",
+            "release_evidence.py --output release-evidence.json",
+            "check_provenance.py release-evidence.json",
+            "retention-days: 30",
             "permissions:\n  contents: read",
         ),
     )
@@ -87,7 +97,10 @@ def validate_runtime_hardening() -> None:
 def validate_operations_docs() -> None:
     required_files = (
         "docs/backup-restore-drill.md",
+        "docs/incident-drills.md",
+        "docs/migrations.md",
         "docs/release-operations.md",
+        "docs/slo-reporting.md",
         "docs/branch-protection.md",
         "docs/observability.md",
     )
@@ -96,16 +109,19 @@ def validate_operations_docs() -> None:
         raise RuntimeError("missing operations documentation: " + ", ".join(missing))
     require_fragments(
         "docs/backup-restore-drill.md",
-        ("RPO", "RTO", "isolated restore", "tenant isolation", "audit"),
+        ("RPO", "RTO", "isolated restore", "tenant isolation", "audit", "verify_backup.py"),
     )
     require_fragments(
         "docs/release-operations.md",
-        ("SLO", "structured logs", "metrics", "traces", "safe failure", "runbook"),
+        ("SLO", "structured logs", "metrics", "traces", "safe failure", "runbook", "evidence manifest", "error budget"),
     )
     require_fragments(
         "docs/branch-protection.md",
         ("dependency review", "SBOM", "release verification", "required check"),
     )
+    require_fragments("docs/incident-drills.md", ("approval-gated", "safe response", "tenant/RBAC", "fails closed"))
+    require_fragments("docs/slo-reporting.md", ("error-budget", "pause_promotion", "aggregate counters"))
+    require_fragments("docs/migrations.md", ("migration_rehearsal.py", "downgrade", "no table"))
 
 
 def validate_public_naming() -> None:

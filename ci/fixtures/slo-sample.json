@@ -1,0 +1,10 @@
+{
+  "window_minutes": 5,
+  "requests_total": 1000,
+  "server_errors": 4,
+  "ready_checks_total": 1000,
+  "ready_failures": 2,
+  "latency_ms": [120, 180, 220, 240, 310, 410, 520, 650, 780, 900],
+  "audit_failures": 0,
+  "tenant_boundary_failures": 0
+}
