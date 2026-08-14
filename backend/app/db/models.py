@@ -104,6 +104,38 @@ class ServiceAccountToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AccessRequest(Base):
+    __tablename__ = "access_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    requester_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    requester_actor: Mapped[str] = mapped_column(String(128))
+    requested_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    reason: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    approver_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    approver_actor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    decision_comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AccessGovernanceEvent(Base):
+    __tablename__ = "access_governance_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    actor_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    resource_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    outcome: Mapped[str] = mapped_column(String(32), index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ScanRun(Base):
     __tablename__ = "scan_runs"
 

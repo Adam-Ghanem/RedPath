@@ -90,3 +90,17 @@ Migration version 5 creates the additive `service_accounts` and `service_account
 ## Privacy and safe failure
 
 Tenant IDs, roles, service-account scopes, and session state are evaluated server-side. Cross-tenant resource access remains concealed as not found. Authentication, authorization, step-up, and rate-limit failures return stable generic error envelopes with request IDs and do not disclose raw claims, bearer tokens, passwords, OTPs, provider responses, resource identifiers, or stack traces. Audit events record the authenticated actor, route template, operation, and bounded non-sensitive metadata while preserving the append-only digest chain.
+
+## Access governance
+
+Access-governance operations are tenant-scoped and server-authorized. Policy evaluation accepts only a bounded set of known permission scopes, a bounded requested lifetime, and a bounded reason; it records a durable decision event containing counts and reason codes rather than the raw reason or credentials. A JIT request remains pending until a different tenant administrator or platform administrator approves or denies it. Service-account principals cannot approve requests, and requesters cannot approve their own requests.
+
+Service-account inventory reports include expiry posture, active-token counts, token-version state, and next token expiry, but never token material. Revocation verification is a read-only local check that confirms the current token version and whether any prior active token remains. Session-risk evaluation is a mockable hook that returns only bounded risk level, safe signal names, and a step-up requirement. The default evaluator considers privileged role, service-account authentication, MFA state, and an allow-listed source label; deployments may inject a stricter evaluator without changing routes.
+
+Least-privilege review exports are tenant-scoped, capped at 200 service accounts, and classify only declared scope posture. They do not mutate identities, call an external provider, or grant access. Governance events are persisted with tenant, actor, event type, outcome, resource identifier where needed, and bounded metadata. The existing chained audit log records corresponding safe operation events without secrets, raw request reasons, bearer tokens, or unbounded payloads.
+
+## Access-governance migration and rollback
+
+Alembic revision `7c9d2a4e1f6b` adds `access_requests` and `access_governance_events` with tenant, requester, status, expiry, decision, event, and bounded metadata fields plus indexes for tenant, status, expiry, and resource lookups. The upgrade is additive and the downgrade drops only these two new tables. Before downgrade, pending requests should be denied or allowed through the API and governance-event retention requirements reviewed; no identity or service-account tables are touched.
+
+Access-governance reports use bounded SQL queries and a maximum of 200 rows per report. Token posture checks make one account query plus one bounded token query for the tenant. JIT list queries are tenant-filtered and capped. No live packet capture, external identity-provider write, password collection, or remote SIEM mutation is involved.

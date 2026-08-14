@@ -102,6 +102,84 @@ class ServiceAccountTokenResponse(BaseModel):
     expires_at: datetime
 
 
+class PolicyEvaluationRequest(BaseModel):
+    requested_scopes: list[str] = Field(min_length=1, max_length=4)
+    requested_ttl_minutes: int = Field(default=60, ge=5, le=240)
+    reason: str = Field(min_length=10, max_length=500)
+
+    @field_validator("requested_scopes")
+    @classmethod
+    def requested_scopes_must_be_known(cls, scopes: list[str]) -> list[str]:
+        if len(set(scopes)) != len(scopes) or any(scope not in SERVICE_ACCOUNT_SCOPES for scope in scopes):
+            raise ValueError("requested scopes must be unique and drawn from the supported scope set")
+        return scopes
+
+
+class PolicyEvaluationResponse(BaseModel):
+    allowed: bool
+    reason_code: str
+    effective_scopes: list[str]
+    requires_approval: bool
+    requires_step_up: bool
+
+
+class AccessRequestCreateRequest(PolicyEvaluationRequest):
+    pass
+
+
+class AccessRequestDecisionRequest(BaseModel):
+    decision: Literal["approve", "deny"]
+    comment: str = Field(default="", max_length=500)
+
+
+class AccessRequestResponse(BaseModel):
+    request_id: str
+    tenant_id: str
+    requester_user_id: str
+    requester_actor: str
+    requested_scopes: list[str]
+    reason: str
+    status: Literal["pending", "approved", "denied", "expired"]
+    expires_at: datetime
+    approver_actor: str | None
+    decision_comment: str | None
+    decided_at: datetime | None
+    created_at: datetime
+
+
+class ServiceAccountInventoryItem(ServiceAccountResponse):
+    active_token_count: int = Field(ge=0)
+    expired: bool
+    next_token_expiry: datetime | None
+
+
+class RevocationVerificationResponse(BaseModel):
+    service_account_id: str
+    token_version: int
+    active_token_count: int = Field(ge=0)
+    revoked_token_count: int = Field(ge=0)
+    verified_at: datetime
+    all_prior_tokens_revoked: bool
+
+
+class SessionRiskResponse(BaseModel):
+    risk_level: Literal["low", "medium", "high"]
+    signals: list[str] = Field(max_length=8)
+    requires_step_up: bool
+    evaluated_at: datetime
+
+
+class LeastPrivilegeReviewItem(ServiceAccountInventoryItem):
+    excess_scopes: list[str]
+    risk_level: Literal["low", "medium", "high"]
+
+
+class LeastPrivilegeReviewResponse(BaseModel):
+    generated_at: datetime
+    tenant_id: str
+    items: list[LeastPrivilegeReviewItem] = Field(max_length=200)
+
+
 class TenantCreateRequest(BaseModel):
     slug: str = Field(min_length=2, max_length=128, pattern=r"^[a-z0-9][a-z0-9-]{1,127}$")
     name: str = Field(min_length=2, max_length=255)

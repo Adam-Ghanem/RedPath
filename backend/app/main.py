@@ -25,6 +25,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     oidc_verifier: Callable[[str], Principal] | None = None,
+    risk_evaluator=None,
 ) -> FastAPI:
     resolved = settings or get_settings()
     metrics = MetricsRegistry()
@@ -37,7 +38,15 @@ def create_app(
     )
     application.state.audit_logger = audit
     application.add_middleware(RequestObservabilityMiddleware, metrics=metrics)
-    application.include_router(build_router(resolved, metrics, audit=audit, oidc_verifier=oidc_verifier))
+    application.include_router(
+        build_router(
+            resolved,
+            metrics,
+            audit=audit,
+            oidc_verifier=oidc_verifier,
+            risk_evaluator=risk_evaluator,
+        )
+    )
 
     @application.exception_handler(OwnershipDenied)
     async def ownership_denied_handler(request: Request, _: OwnershipDenied) -> JSONResponse:

@@ -109,14 +109,23 @@ from app.schemas.contracts import (
     TrendPoint,
 )
 from app.schemas.identity import (
+    AccessRequestCreateRequest,
+    AccessRequestDecisionRequest,
+    AccessRequestResponse,
     AuthBootstrapRequest,
     AuthLoginRequest,
     AuthMeResponse,
     AuthSessionRevokeResponse,
     AuthTokenResponse,
+    LeastPrivilegeReviewResponse,
+    PolicyEvaluationRequest,
+    PolicyEvaluationResponse,
+    RevocationVerificationResponse,
     ServiceAccountCreateRequest,
+    ServiceAccountInventoryItem,
     ServiceAccountResponse,
     ServiceAccountTokenResponse,
+    SessionRiskResponse,
     TenantCreateRequest,
     TenantResponse,
     UserCreateRequest,
@@ -130,6 +139,11 @@ from app.schemas.pcap import (
     PcapEvidenceView,
     PcapLifecycleResponse,
     PcapManifestVerification,
+)
+from app.services.access_governance import (
+    AccessGovernanceService,
+    AccessRequestInvalid,
+    AccessRequestNotFound,
 )
 from app.services.ad_detection import detect_ad_findings
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
@@ -229,6 +243,7 @@ def build_router(
     *,
     audit: AuditLogger | None = None,
     oidc_verifier=None,
+    risk_evaluator=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
     metrics = metrics or MetricsRegistry()
@@ -245,6 +260,10 @@ def build_router(
         session_factory,
         max_ttl_days=settings.service_account_max_ttl_days,
         token_ttl_minutes=settings.service_account_token_ttl_minutes,
+    )
+    access_governance = AccessGovernanceService(
+        session_factory,
+        risk_evaluator=risk_evaluator,
     )
     limiter = RateLimiter(settings.rate_limit_requests_per_minute)
     copilot_limiter = RateLimiter(settings.ai_copilot_requests_per_minute)
@@ -411,6 +430,130 @@ def build_router(
         record_audit(
             "auth.service_account_revoked",
             {"service_account_id": result.service_account_id, "token_version": result.token_version},
+        )
+        return result
+
+    @protected_router.post(
+        "/auth/access-governance/policy-evaluate",
+        response_model=PolicyEvaluationResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def access_policy_evaluate(request: PolicyEvaluationRequest) -> PolicyEvaluationResponse:
+        principal = get_principal()
+        result = access_governance.evaluate_policy(principal, request)
+        record_audit(
+            "authz.policy_evaluated",
+            {
+                "allowed": result.allowed,
+                "reason_code": result.reason_code,
+                "requested_scope_count": len(result.effective_scopes),
+            },
+        )
+        return result
+
+    @protected_router.post(
+        "/auth/access-requests",
+        response_model=AccessRequestResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def access_request_create(request: AccessRequestCreateRequest) -> AccessRequestResponse:
+        try:
+            result = access_governance.create_request(get_principal(), request)
+        except AccessRequestInvalid as exc:
+            raise HTTPException(status_code=409, detail="access request rejected") from exc
+        record_audit(
+            "authz.jit_request_created",
+            {"request_id": result.request_id, "requested_scope_count": len(result.requested_scopes)},
+        )
+        return result
+
+    @protected_router.get(
+        "/auth/access-requests",
+        response_model=list[AccessRequestResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def access_request_list() -> list[AccessRequestResponse]:
+        principal = get_principal()
+        include_all = principal.has_role("platform_admin") or principal.has_role("tenant_admin")
+        return access_governance.list_requests(principal, include_all=include_all)
+
+    @protected_router.post(
+        "/auth/access-requests/{request_id}/decision",
+        response_model=AccessRequestResponse,
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def access_request_decide(
+        request_id: str,
+        request: AccessRequestDecisionRequest,
+    ) -> AccessRequestResponse:
+        try:
+            result = access_governance.decide_request(get_principal(), request_id, request)
+        except AccessRequestNotFound as exc:
+            raise HTTPException(status_code=404, detail="access request not found") from exc
+        except AccessRequestInvalid as exc:
+            raise HTTPException(status_code=409, detail="access request rejected") from exc
+        record_audit(
+            "authz.jit_request_decided",
+            {"request_id": result.request_id, "status": result.status},
+        )
+        return result
+
+    @protected_router.get(
+        "/auth/access-governance/service-accounts",
+        response_model=list[ServiceAccountInventoryItem],
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def access_service_account_inventory() -> list[ServiceAccountInventoryItem]:
+        return access_governance.service_account_inventory(get_principal())
+
+    @protected_router.get(
+        "/auth/access-governance/service-accounts/{service_account_id}/revocation",
+        response_model=RevocationVerificationResponse,
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def access_service_account_revocation(service_account_id: str) -> RevocationVerificationResponse:
+        try:
+            result = access_governance.verify_revocation(get_principal(), service_account_id)
+        except AccessRequestNotFound as exc:
+            raise HTTPException(status_code=404, detail="service account not found") from exc
+        record_audit(
+            "authz.service_account_revocation_verified",
+            {
+                "service_account_id": result.service_account_id,
+                "active_token_count": result.active_token_count,
+                "all_prior_tokens_revoked": result.all_prior_tokens_revoked,
+            },
+        )
+        return result
+
+    @protected_router.get(
+        "/auth/access-governance/session-risk",
+        response_model=SessionRiskResponse,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def access_session_risk(request: Request) -> SessionRiskResponse:
+        principal = get_principal()
+        result = access_governance.session_risk(
+            principal,
+            {"source": request.headers.get("x-client-source", "unknown")},
+        )
+        record_audit(
+            "authz.session_risk_evaluated",
+            {"risk_level": result.risk_level, "requires_step_up": result.requires_step_up},
+        )
+        return result
+
+    @protected_router.get(
+        "/auth/access-governance/least-privilege-review",
+        response_model=LeastPrivilegeReviewResponse,
+        dependencies=[Depends(permission_dependency("manage_identity", step_up_policy=step_up_policy))],
+    )
+    def access_least_privilege_review() -> LeastPrivilegeReviewResponse:
+        result = access_governance.least_privilege_review(get_principal())
+        record_audit(
+            "authz.least_privilege_review_exported",
+            {"account_count": len(result.items)},
         )
         return result
 

@@ -13,6 +13,13 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET/POST | `/api/v1/auth/service-accounts` | List or create tenant-scoped least-privilege service accounts | Manage-identity permission; optional MFA step-up; token returned only on create |
 | POST | `/api/v1/auth/service-accounts/{service_account_id}/rotate` | Revoke prior service-account tokens and issue one replacement | Manage-identity permission; old tokens fail closed |
 | POST | `/api/v1/auth/service-accounts/{service_account_id}/revoke` | Disable a service account and revoke its active tokens | Manage-identity permission; audit logged without token material |
+| POST | `/api/v1/auth/access-governance/policy-evaluate` | Evaluate a bounded access request against tenant policy | Read permission; no provider write; policy event audit logged |
+| POST/GET | `/api/v1/auth/access-requests` | Create or list tenant-scoped JIT access requests | Requester sees own requests; tenant admins see tenant requests; no self-approval |
+| POST | `/api/v1/auth/access-requests/{request_id}/decision` | Approve or deny a pending JIT request | Manage-identity permission; optional step-up; decision audit logged |
+| GET | `/api/v1/auth/access-governance/service-accounts` | Inventory service-account expiry and active-token posture | Tenant-scoped, bounded to 200 rows, no token material |
+| GET | `/api/v1/auth/access-governance/service-accounts/{service_account_id}/revocation` | Verify token-version and revocation state | Tenant-scoped; read-only local check |
+| GET | `/api/v1/auth/access-governance/session-risk` | Evaluate bounded session-risk signals | Read permission; no raw headers or credentials persisted |
+| GET | `/api/v1/auth/access-governance/least-privilege-review` | Export a bounded least-privilege review | Manage-identity permission; tenant-scoped; audit logged |
 | GET | `/api/v1/scope` | Show allowed CIDRs and dry-run default | Does not expose credentials |
 | GET | `/api/v1/techniques` | Return supported MITRE mappings | Static registry read |
 | GET | `/api/v1/scenarios` | Return curated safe assessment playbooks | Static catalog read |
