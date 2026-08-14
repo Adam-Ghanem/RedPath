@@ -71,6 +71,13 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | POST | `/api/v1/detections/coverage` | Score rules against normalized telemetry and path evidence | Analyze permission; tenant and actor derived server-side; dry-run safe |
 | POST | `/api/v1/detections/regressions/normalized` | Run bounded normalized-telemetry regression fixtures | Analyze permission; raw telemetry excluded from report; dry-run safe |
 | POST | `/api/v1/detections/lifecycle/gate` | Validate a versioned detection pack and run its regression/coverage baselines | Analyze permission; server-derived tenant/actor; safe dry-run gate; audit logged |
+| POST | `/api/v1/detections/quality/tuning-proposals` | Create a bounded tuning proposal | Analyze permission; process-scoped; server-derived tenant/actor; audit logged |
+| GET | `/api/v1/detections/quality/tuning-proposals` | List current-tenant tuning proposals | Read permission; tenant-isolated; no raw telemetry |
+| POST | `/api/v1/detections/quality/tuning-proposals/{proposal_id}/review` | Approve or reject a tuning proposal | Manage-cases permission; separate reviewer required; audit logged |
+| POST | `/api/v1/detections/quality/false-positive-reviews` | Record exact-rule-version false-positive disposition metadata | Analyze permission; bounded metadata only; audit logged |
+| POST | `/api/v1/detections/quality/coverage-drift` | Compare signed quality snapshots against drift thresholds | Analyze permission; tenant match required; read-only |
+| POST | `/api/v1/detections/quality/regression-trends` | Produce deterministic trend direction from fixture-run points | Analyze permission; max 90 points; tenant match required |
+| GET | `/api/v1/detections/quality/deprecation-windows` | List rule deprecation windows and warnings | Read permission; bounded process-scoped catalog; read-only |
 | POST | `/api/v1/siem/telemetry/ingest` | Retrieve and persist redacted, tenant-scoped Wazuh projections | RBAC-protected read-only external query; bounded window; audit logged |
 | GET | `/api/v1/siem/telemetry` | Read redacted local telemetry projections | RBAC-protected; server-derived tenant predicate; audit logged |
 | POST | `/api/v1/graph/analyze` | Compute shortest path and chokepoints | Pure in-memory analysis |

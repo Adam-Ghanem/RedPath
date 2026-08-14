@@ -60,6 +60,8 @@ from app.schemas.contracts import (
     CopilotExplanationResponse,
     CorrelatedRisk,
     CorrelationRequest,
+    CoverageDriftReport,
+    CoverageDriftRequest,
     CoverageScorecard,
     DetectionCoverageReport,
     DetectionCoverageRequest,
@@ -89,6 +91,8 @@ from app.schemas.contracts import (
     EvidenceRetentionDecisionResponse,
     EvidenceReviewUpdate,
     ExecutiveKpis,
+    FalsePositiveReview,
+    FalsePositiveReviewCreate,
     FindingInput,
     GovernanceHistoryEvent,
     GraphRequest,
@@ -102,6 +106,8 @@ from app.schemas.contracts import (
     ReconResult,
     RegressionReport,
     RegressionRunRequest,
+    RegressionTrendReport,
+    RegressionTrendRequest,
     RemediationAssignmentUpdate,
     RemediationCreate,
     RemediationLifecycleUpdate,
@@ -112,10 +118,14 @@ from app.schemas.contracts import (
     RiskAcceptanceCreate,
     RiskAcceptanceDecisionRequest,
     RiskAcceptanceResponse,
+    RuleDeprecationReport,
     ScenarioRunRequest,
     ScenarioRunResponse,
     ScenarioSpec,
     TrendPoint,
+    TuningProposal,
+    TuningProposalCreate,
+    TuningProposalReviewRequest,
 )
 from app.schemas.identity import (
     AccessRequestCreateRequest,
@@ -167,6 +177,7 @@ from app.services.copilot_sources import CopilotSourceNotFound, register_attack_
 from app.services.correlation import correlate_findings
 from app.services.detection_framework import DetectionRuleCatalog
 from app.services.detection_lifecycle import DetectionLifecycleService
+from app.services.detection_quality_ops import DetectionQualityError, DetectionQualityNotFound, DetectionQualityService
 from app.services.discovery_jobs import (
     DiscoveryJobNotFound,
     DiscoveryJobService,
@@ -662,6 +673,7 @@ def build_router(
     )
     detection_catalog = DetectionRuleCatalog()
     detection_lifecycle = DetectionLifecycleService(detection_catalog)
+    detection_quality = DetectionQualityService(detection_catalog)
 
     @router.get("/health", response_model=HealthContract)
     def health() -> HealthContract:
@@ -1847,6 +1859,174 @@ def build_router(
                 "total_cases": result.total_cases,
                 "false_positive_rate": result.false_positive_rate,
             },
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/quality/tuning-proposals",
+        response_model=TuningProposal,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_tuning_proposal(request: TuningProposalCreate) -> TuningProposal:
+        principal = get_principal()
+        try:
+            result = detection_quality.create_tuning_proposal(
+                request,
+                tenant_id=principal.tenant_id,
+                actor=principal.username,
+            )
+        except DetectionQualityNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DetectionQualityError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.quality_tuning_proposed",
+            {
+                "proposal_id": result.proposal_id,
+                "tenant_id": principal.tenant_id,
+                "rule_id": result.rule_id,
+                "rule_version": result.rule_version,
+                "proposal_type": result.proposal_type,
+            },
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.get(
+        "/detections/quality/tuning-proposals",
+        response_model=list[TuningProposal],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def detection_tuning_proposals() -> list[TuningProposal]:
+        principal = get_principal()
+        result = detection_quality.list_tuning_proposals(tenant_id=principal.tenant_id)
+        record_audit(
+            "detection.quality_tuning_listed",
+            {"tenant_id": principal.tenant_id, "proposal_count": len(result)},
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/quality/tuning-proposals/{proposal_id}/review",
+        response_model=TuningProposal,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def detection_tuning_proposal_review(
+        proposal_id: str,
+        request: TuningProposalReviewRequest,
+    ) -> TuningProposal:
+        principal = get_principal()
+        try:
+            result = detection_quality.review_tuning_proposal(
+                proposal_id,
+                request,
+                tenant_id=principal.tenant_id,
+                reviewer=principal.username,
+            )
+        except DetectionQualityNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DetectionQualityError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.quality_tuning_reviewed",
+            {
+                "proposal_id": result.proposal_id,
+                "tenant_id": principal.tenant_id,
+                "decision": result.status,
+                "rule_id": result.rule_id,
+            },
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/quality/false-positive-reviews",
+        response_model=FalsePositiveReview,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_false_positive_review(request: FalsePositiveReviewCreate) -> FalsePositiveReview:
+        principal = get_principal()
+        try:
+            result = detection_quality.record_false_positive_review(
+                request,
+                tenant_id=principal.tenant_id,
+                reviewer=principal.username,
+            )
+        except DetectionQualityNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DetectionQualityError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.false_positive_reviewed",
+            {
+                "review_id": result.review_id,
+                "tenant_id": principal.tenant_id,
+                "rule_id": result.rule_id,
+                "classification": result.classification,
+                "reason_code": result.reason_code,
+            },
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/quality/coverage-drift",
+        response_model=CoverageDriftReport,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_coverage_drift(request: CoverageDriftRequest) -> CoverageDriftReport:
+        principal = get_principal()
+        try:
+            result = detection_quality.compare_coverage_drift(request, tenant_id=principal.tenant_id)
+        except DetectionQualityError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.coverage_drift_compared",
+            {
+                "tenant_id": principal.tenant_id,
+                "baseline_snapshot_id": result.baseline_snapshot_id,
+                "current_snapshot_id": result.current_snapshot_id,
+                "drift_detected": result.drift_detected,
+            },
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.post(
+        "/detections/quality/regression-trends",
+        response_model=RegressionTrendReport,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def detection_regression_trend(request: RegressionTrendRequest) -> RegressionTrendReport:
+        principal = get_principal()
+        try:
+            result = detection_quality.regression_trend(request, tenant_id=principal.tenant_id)
+        except DetectionQualityError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        record_audit(
+            "detection.regression_trend_calculated",
+            {
+                "tenant_id": principal.tenant_id,
+                "point_count": len(result.points),
+                "direction": result.direction,
+            },
+            actor=principal.username,
+        )
+        return result
+
+    @protected_router.get(
+        "/detections/quality/deprecation-windows",
+        response_model=RuleDeprecationReport,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def detection_deprecation_windows() -> RuleDeprecationReport:
+        principal = get_principal()
+        result = detection_quality.deprecation_report()
+        record_audit(
+            "detection.deprecation_windows_listed",
+            {"tenant_id": principal.tenant_id, "window_count": len(result.windows)},
+            actor=principal.username,
         )
         return result
 

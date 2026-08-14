@@ -485,6 +485,10 @@ class DetectionRule(BaseModel):
     approval_state: Literal["not_required", "pending", "approved", "rejected"] = "pending"
     reviewed_by: str | None = Field(default=None, max_length=128)
     reviewed_at: datetime | None = None
+    deprecation_status: Literal["active", "scheduled", "deprecated"] = "active"
+    deprecation_sunset_at: datetime | None = None
+    replacement_rule_id: str | None = Field(default=None, max_length=128)
+    deprecation_reason: str = Field(default="", max_length=1000)
     requires_approval: bool = True
 
 
@@ -502,6 +506,193 @@ class DetectionRuleValidationResult(BaseModel):
     safe_logic: bool
     approval_valid: bool
     errors: list[str] = Field(default_factory=list, max_length=32)
+    warnings: list[str] = Field(default_factory=list, max_length=32)
+
+
+def _quality_timestamp(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        raise ValueError("quality-operation timestamps must be timezone-aware")
+    return value
+
+
+class TuningProposalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    rule_version: int = Field(ge=1)
+    proposal_type: Literal["reduce_false_positives", "improve_coverage", "threshold_review", "deprecate_rule"]
+    summary: str = Field(min_length=10, max_length=2000)
+    rationale: str = Field(min_length=10, max_length=4000)
+    evidence_fixture_ids: list[str] = Field(default_factory=list, max_length=64)
+    target_false_positive_rate: float | None = Field(default=None, ge=0, le=100)
+    proposed_window_seconds: int | None = Field(default=None, ge=1, le=86400)
+    proposed_sunset_at: datetime | None = None
+    replacement_rule_id: str | None = Field(default=None, max_length=128)
+
+    _sunset_timezone = field_validator("proposed_sunset_at")(_quality_timestamp)
+
+
+class FalsePositiveReviewCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alert_id: str = Field(min_length=1, max_length=128)
+    rule_id: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.-]+$")
+    rule_version: int = Field(ge=1)
+    classification: Literal["false_positive", "benign_expected", "duplicate", "needs_investigation"]
+    reason_code: Literal[
+        "authorized_activity",
+        "expected_automation",
+        "telemetry_quality",
+        "duplicate_signal",
+        "insufficient_context",
+    ]
+    analyst_note: str = Field(min_length=10, max_length=2000)
+    evidence_fixture_id: str | None = Field(default=None, max_length=128)
+
+
+class FalsePositiveReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: str
+    tenant_id: str
+    alert_id: str
+    rule_id: str
+    rule_version: int
+    classification: Literal["false_positive", "benign_expected", "duplicate", "needs_investigation"]
+    reason_code: str
+    analyst_note: str
+    evidence_fixture_id: str | None = None
+    reviewed_by: str
+    reviewed_at: datetime
+
+
+class TuningProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: str
+    tenant_id: str
+    rule_id: str
+    rule_version: int
+    proposal_type: Literal["reduce_false_positives", "improve_coverage", "threshold_review", "deprecate_rule"]
+    summary: str
+    rationale: str
+    evidence_fixture_ids: list[str] = Field(default_factory=list, max_length=64)
+    target_false_positive_rate: float | None = Field(default=None, ge=0, le=100)
+    proposed_window_seconds: int | None = Field(default=None, ge=1, le=86400)
+    proposed_sunset_at: datetime | None = None
+    replacement_rule_id: str | None = None
+    status: Literal["proposed", "approved", "rejected"]
+    created_by: str
+    created_at: datetime
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    review_note: str | None = None
+
+
+class TuningProposalReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approve", "reject"]
+    review_note: str = Field(min_length=10, max_length=2000)
+
+
+class DetectionQualitySnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: str = Field(min_length=1, max_length=128)
+    tenant_id: str = Field(min_length=1, max_length=128)
+    captured_at: datetime
+    rule_count: int = Field(ge=0, le=10000)
+
+    _captured_at_timezone = field_validator("captured_at")(_quality_timestamp)
+    coverage_percent: float = Field(ge=0, le=100)
+    path_coverage_percent: float = Field(ge=0, le=100)
+    true_positive_rate: float = Field(ge=0, le=100)
+    false_positive_rate: float = Field(ge=0, le=100)
+    rule_provenance: list[DetectionRuleProvenance] = Field(default_factory=list, max_length=128)
+
+
+class CoverageDriftThresholds(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_coverage_drop_percent: float = Field(default=5.0, ge=0, le=100)
+    max_path_coverage_drop_percent: float = Field(default=5.0, ge=0, le=100)
+    max_true_positive_drop_percent: float = Field(default=5.0, ge=0, le=100)
+    max_false_positive_increase_percent: float = Field(default=5.0, ge=0, le=100)
+
+
+class CoverageDriftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    baseline: DetectionQualitySnapshot
+    current: DetectionQualitySnapshot
+    thresholds: CoverageDriftThresholds = Field(default_factory=CoverageDriftThresholds)
+
+
+class CoverageDriftReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    baseline_snapshot_id: str
+    current_snapshot_id: str
+    coverage_delta_percent: float
+    path_coverage_delta_percent: float
+    true_positive_delta_percent: float
+    false_positive_delta_percent: float
+    drift_detected: bool
+    drift_reasons: list[str] = Field(default_factory=list, max_length=16)
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class RegressionTrendPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(min_length=1, max_length=128)
+    captured_at: datetime
+    total_cases: int = Field(ge=0, le=10000)
+
+    _captured_at_timezone = field_validator("captured_at")(_quality_timestamp)
+    passed_cases: int = Field(ge=0, le=10000)
+    true_positive_rate: float = Field(ge=0, le=100)
+    false_positive_rate: float = Field(ge=0, le=100)
+    coverage_percent: float = Field(ge=0, le=100)
+
+
+class RegressionTrendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(min_length=1, max_length=128)
+    points: list[RegressionTrendPoint] = Field(min_length=1, max_length=90)
+
+
+class RegressionTrendReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    points: list[RegressionTrendPoint]
+    true_positive_delta_percent: float
+    false_positive_delta_percent: float
+    coverage_delta_percent: float
+    direction: Literal["improving", "stable", "degrading"]
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+class RuleDeprecationWindow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: str
+    rule_version: int
+    status: Literal["active", "scheduled", "deprecated"]
+    sunset_at: datetime | None = None
+    days_remaining: int | None = None
+    replacement_rule_id: str | None = None
+    rationale: str
+
+
+class RuleDeprecationReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    windows: list[RuleDeprecationWindow] = Field(default_factory=list, max_length=128)
     warnings: list[str] = Field(default_factory=list, max_length=32)
 
 

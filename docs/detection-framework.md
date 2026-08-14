@@ -22,6 +22,8 @@ A rule is represented by `DetectionRule` in `backend/app/schemas/contracts.py` a
 | `group_by` | Optional event fields that prevent unrelated principals or hosts from being correlated. |
 | `deployment_status` | `draft`, `testing`, or `production`. Production rules must retain `requires_approval=true`. |
 | `false_positive_sla_percent` | The quality threshold to review during rule tuning. |
+| `approval_state`, `reviewed_by`, `reviewed_at` | Explicit reviewer evidence required for production promotion. |
+| `deprecation_status`, `deprecation_sunset_at`, `replacement_rule_id` | Governed active, scheduled, or deprecated lifecycle window. |
 
 Field paths are limited to alphanumeric characters, dots, hyphens, and underscores. Evaluation reads only the validated `WazuhAlert` model representation. The `in` operator accepts only a list, and boolean equality uses strict boolean identity rather than string coercion.
 
@@ -61,12 +63,21 @@ All endpoints are under `/api/v1` and record an audit event. Rule registration r
 | `POST /detections/regressions/run` | `RegressionRunRequest` → `RegressionReport` | Runs supplied fixtures, or the built-in synthetic suite when `fixtures` is omitted. |
 | `POST /detections/coverage` | `DetectionCoverageRequest` → `DetectionCoverageReport` | Scores selected rules against normalized telemetry and bounded attack-path evidence. |
 | `POST /detections/regressions/normalized` | `NormalizedRegressionRequest` → `NormalizedRegressionReport` | Runs tenant-safe regression fixtures over normalized telemetry without returning raw payloads. |
+| `POST /detections/quality/tuning-proposals` | `TuningProposalCreate` → `TuningProposal` | Creates a bounded, process-scoped tuning proposal; actor and tenant are server-derived. |
+| `GET /detections/quality/tuning-proposals` | `list[TuningProposal]` | Lists only proposals for the authenticated tenant. |
+| `POST /detections/quality/tuning-proposals/{proposal_id}/review` | `TuningProposalReviewRequest` → `TuningProposal` | Approves or rejects a proposal with a separate reviewer and audit record. |
+| `POST /detections/quality/false-positive-reviews` | `FalsePositiveReviewCreate` → `FalsePositiveReview` | Records bounded analyst disposition metadata tied to an exact rule revision. |
+| `POST /detections/quality/coverage-drift` | `CoverageDriftRequest` → `CoverageDriftReport` | Compares signed coverage, path, true-positive, and false-positive deltas against thresholds. |
+| `POST /detections/quality/regression-trends` | `RegressionTrendRequest` → `RegressionTrendReport` | Produces deterministic earliest-to-latest trend direction over at most 90 points. |
+| `GET /detections/quality/deprecation-windows` | `RuleDeprecationReport` | Lists active/scheduled/deprecated windows from the process-scoped catalog. |
 
-Detection, telemetry, coverage, regression, evidence, and attack-path routes are placed behind the project’s server-side bearer authentication, `analyze` permission, rate limiting, tenant checks, and audit policy. The authenticated principal’s tenant and username are used for report context and audit actor values; request payloads cannot override either. The feature remains read-only with respect to external systems and honors the application’s dry-run default.
+Detection, telemetry, coverage, regression, evidence, and attack-path routes are placed behind the project’s server-side bearer authentication, `analyze` permission, rate limiting, tenant checks, and audit policy. Quality proposal creation, false-positive review, drift, and trend endpoints require `analyze`; proposal listing and deprecation windows require `read`; proposal approval/rejection requires `manage_cases`. The authenticated principal’s tenant and username are used for report context and audit actor values; request payloads cannot override either. Reviewers cannot approve their own proposals. Audit records contain IDs, statuses, classifications, and bounded counts, not analyst notes or raw telemetry.
+
+Quality operations are fixture-only and process-scoped in this increment. The service caps proposals at 500 per tenant, review records at 2,000 per tenant, trend history at 90 points, and all request collections use bounded Pydantic contracts. Coverage drift uses signed percentage-point deltas and fixed thresholds; trends are sorted by capture time and run ID. No persistence change was made, so no Alembic migration or downgrade is required; rollback is a code revert of the quality-operations commit.
 
 ## Focused validation
 
-The focused suite is `backend/tests/test_detection_framework.py`. It verifies built-in rule matching, same-group and time-window correlation, regression quality metrics, endpoint wiring, approval enforcement, and unknown-rule handling. The repository-wide commands are:
+The focused suites are `backend/tests/test_detection_framework.py`, `backend/tests/test_detection_lifecycle.py`, and `backend/tests/test_detection_quality_ops.py`. They verify built-in rule matching, same-group and time-window correlation, regression quality metrics, lifecycle approval enforcement, reviewer separation, false-positive metadata, tenant isolation, drift/trend determinism, safe-field rejection, deprecation reporting, API authorization, and bounded fixture-history performance. The repository-wide commands are:
 
 ```bash
 pytest -q
