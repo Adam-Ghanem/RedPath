@@ -361,6 +361,7 @@ def test_dead_letter_retention_is_tenant_scoped_and_metrics_are_fixed_name(tmp_p
     session_factory = create_session_factory(f"sqlite:///{tmp_path / 'retention.db'}")
     metrics = MetricsRegistry()
     resilience = TelemetryResilienceStore(session_factory, metrics=metrics)
+    reference_now = datetime(2026, 8, 13, tzinfo=timezone.utc)
     resilience.record_failure(tenant_id="lab", error_code="connector_error")
     resilience.record_failure(tenant_id="other", error_code="connector_error")
     with session_factory() as session:
@@ -374,11 +375,9 @@ def test_dead_letter_retention_is_tenant_scoped_and_metrics_are_fixed_name(tmp_p
             )
         session.commit()
 
-    assert resilience.prune_dead_letters(
-        tenant_id="lab", now=datetime(2026, 8, 13, tzinfo=timezone.utc)
-    ) == 1
-    assert resilience.health(tenant_id="lab").dead_letter_count == 0
-    assert resilience.health(tenant_id="other").dead_letter_count == 1
+    assert resilience.prune_dead_letters(tenant_id="lab", now=reference_now) == 1
+    assert resilience.health(tenant_id="lab", now=reference_now).dead_letter_count == 0
+    assert resilience.health(tenant_id="other", now=reference_now).dead_letter_count == 1
     output = metrics.prometheus()
     assert "redpath_telemetry_dead_letters_total 2" in output
     assert "tenant_id" not in output
