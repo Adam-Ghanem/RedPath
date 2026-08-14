@@ -72,6 +72,19 @@ def verify_evidence_custody(
             f"Evidence {row.title} custody marked {request.decision}.",
             {"evidence_id": row.id, "manifest_sha256": actual_manifest},
         )
+        from app.services.case_compliance import record_decision_event  # noqa: PLC0415
+
+        record_decision_event(
+            session,
+            row.campaign_id,
+            "evidence",
+            row.id,
+            "evidence_custody_changed",
+            None,
+            request.decision,
+            request.note,
+            {"manifest_sha256": actual_manifest},
+        )
         session.commit()
         session.refresh(custody_event)
     return EvidenceCustodyEventResponse(

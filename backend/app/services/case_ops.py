@@ -6,6 +6,7 @@ from typing import Callable
 from app.core.request_context import current_tenant_id
 from app.db.models import Campaign, EvidenceItem, RemediationItem, RiskAcceptance, utcnow
 from app.schemas.contracts import CampaignResponse, CaseStatusUpdate
+from app.services.case_compliance import record_decision_event
 from app.services.case_governance import record_governance_event
 from app.services.expert_ops import _campaign_response
 from app.services.governance import GovernanceViolation
@@ -77,6 +78,17 @@ def update_case_status(
             "case.status_changed",
             request.note or f"Case status changed from {previous_status} to {request.status}.",
             {"from": previous_status, "to": request.status},
+        )
+        record_decision_event(
+            session,
+            case_id,
+            "case",
+            case_id,
+            "case_status_changed",
+            previous_status,
+            request.status,
+            request.note,
+            {},
         )
         session.commit()
         session.refresh(row)

@@ -437,8 +437,61 @@ class RiskAcceptance(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delegation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    delegated_from: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RemediationVerificationEvidence(Base):
+    __tablename__ = "remediation_verification_evidence"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    case_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
+    remediation_id: Mapped[str] = mapped_column(ForeignKey("remediation_items.id"), index=True)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("evidence_items.id"), index=True)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    recorded_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ApprovalDelegation(Base):
+    __tablename__ = "approval_delegations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
+    delegator_username: Mapped[str] = mapped_column(String(128), index=True)
+    delegate_username: Mapped[str] = mapped_column(String(128), index=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    created_by: Mapped[str] = mapped_column(String(128))
+    revoked_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CaseDecisionEvent(Base):
+    __tablename__ = "case_decision_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    resource_type: Mapped[str] = mapped_column(String(64), index=True)
+    resource_id: Mapped[str] = mapped_column(String(36), index=True)
+    decision_type: Mapped[str] = mapped_column(String(96), index=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    previous_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    new_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    previous_digest: Mapped[str] = mapped_column(String(64), default="")
+    digest: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AssessmentRun(Base):

@@ -1307,6 +1307,80 @@ class RemediationAssignmentUpdate(BaseModel):
 class RemediationVerificationUpdate(BaseModel):
     decision: Literal["verified", "rejected"]
     note: str = Field(default="", max_length=2000)
+    evidence_id: str | None = Field(default=None, min_length=1, max_length=36)
+    manifest_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[a-fA-F0-9]{64}$")
+
+
+class RemediationVerificationEvidenceRequest(BaseModel):
+    evidence_id: str = Field(min_length=1, max_length=36)
+    manifest_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-fA-F0-9]{64}$")
+    summary: str = Field(default="", max_length=2000)
+
+
+class RemediationVerificationEvidenceResponse(BaseModel):
+    evidence_record_id: str
+    tenant_id: str
+    case_id: str | None = None
+    remediation_id: str
+    evidence_id: str
+    manifest_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    summary: str = ""
+    recorded_by: str
+    created_at: datetime
+
+
+class ApprovalDelegationCreate(BaseModel):
+    campaign_id: str | None = None
+    delegate_username: str = Field(min_length=2, max_length=128)
+    starts_at: datetime | None = None
+    expires_at: datetime
+
+
+class ApprovalDelegationResponse(BaseModel):
+    delegation_id: str
+    tenant_id: str
+    campaign_id: str | None = None
+    delegator_username: str
+    delegate_username: str
+    starts_at: datetime
+    expires_at: datetime
+    status: Literal["active", "expired", "revoked"]
+    created_by: str
+    revoked_by: str | None = None
+    revoked_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RemediationEscalationDraft(BaseModel):
+    draft_id: str
+    tenant_id: str
+    remediation_id: str
+    recipient_actor: str
+    state: Literal["due_soon", "overdue"]
+    escalation_level: Literal["manager_review", "leadership_review"]
+    policy_version: Literal["2.0"] = "2.0"
+    notification_mode: Literal["mock"] = "mock"
+    requires_opt_in: bool = True
+    sent: bool = False
+    subject: str
+    body: str
+    generated_at: datetime
+
+
+class RiskAcceptanceExpiryReminder(BaseModel):
+    reminder_id: str
+    tenant_id: str
+    acceptance_id: str
+    approver: str
+    expires_on: str
+    days_remaining: int
+    urgency: Literal["expiring", "expired"]
+    policy_version: Literal["1.0"] = "1.0"
+    notification_mode: Literal["mock"] = "mock"
+    requires_opt_in: bool = True
+    sent: bool = False
+    generated_at: datetime
 
 
 class RiskAcceptanceCreate(BaseModel):
@@ -1322,6 +1396,8 @@ class RiskAcceptanceResponse(RiskAcceptanceCreate):
     tenant_id: str
     approver: str
     acceptance_id: str
+    delegation_id: str | None = None
+    delegated_from: str | None = None
     status: Literal["active", "expired", "revoked"]
     approval_status: Literal["approved", "revoked", "expired"] = "approved"
     approved_by: str | None = None
@@ -1336,6 +1412,7 @@ class RiskAcceptanceDecisionRequest(BaseModel):
     decision: Literal["approve", "revoke"]
     expires_on: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     note: str = Field(default="", max_length=2000)
+    delegation_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class CoverageScorecard(BaseModel):
@@ -1388,6 +1465,16 @@ class EvidenceManifest(BaseModel):
     generated_at: datetime
 
 
+class SlaClock(BaseModel):
+    policy_version: Literal["2.0"] = "2.0"
+    started_at: datetime
+    due_at: datetime
+    elapsed_seconds: int = Field(ge=0)
+    remaining_seconds: int
+    paused_seconds: int = Field(ge=0)
+    state: Literal["on_track", "due_soon", "overdue", "closed"]
+
+
 class RemediationSlaItem(BaseModel):
     remediation_id: str
     finding_title: str
@@ -1398,6 +1485,7 @@ class RemediationSlaItem(BaseModel):
     due_date: str | None = None
     target_days: int = Field(ge=1)
     state: Literal["on_track", "due_soon", "overdue", "closed"]
+    clock: SlaClock
 
 
 class RemediationSlaEscalation(BaseModel):
@@ -1406,8 +1494,11 @@ class RemediationSlaEscalation(BaseModel):
     assigned_to: str | None = None
     state: Literal["due_soon", "overdue"]
     escalation_level: Literal["manager_review", "leadership_review"]
-    policy_version: Literal["1.0"] = "1.0"
+    policy_version: Literal["2.0"] = "2.0"
     recommended_action: str
+    draft_id: str
+    notification_mode: Literal["mock"] = "mock"
+    requires_opt_in: bool = True
 
 
 class CampaignTimelineEvent(BaseModel):
@@ -1418,6 +1509,31 @@ class CampaignTimelineEvent(BaseModel):
     occurred_at: datetime
 
 
+class CaseDecisionEventResponse(BaseModel):
+    event_id: str
+    tenant_id: str
+    case_id: str
+    resource_type: str
+    resource_id: str
+    decision_type: str
+    actor: str
+    previous_state: str | None = None
+    new_state: str | None = None
+    reason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    previous_digest: str
+    digest: str
+    created_at: datetime
+
+
+class CaseDecisionTimelineResponse(BaseModel):
+    case_id: str
+    tenant_id: str
+    events: list[CaseDecisionEventResponse] = Field(default_factory=list)
+    integrity_valid: bool
+    tail_digest: str
+
+
 class CampaignExport(BaseModel):
     schema_version: Literal["case-export.v3"] = "case-export.v3"
     tenant_id: str
@@ -1426,6 +1542,7 @@ class CampaignExport(BaseModel):
     timeline: list[CampaignTimelineEvent] = Field(default_factory=list)
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     remediations: list[RemediationResponse] = Field(default_factory=list)
+    verification_evidence: list[RemediationVerificationEvidenceResponse] = Field(default_factory=list)
     custody_history: list[EvidenceCustodyEventResponse] = Field(default_factory=list)
     governance_history: list[GovernanceHistoryEvent] = Field(default_factory=list)
     risk_acceptances: list[RiskAcceptanceResponse] = Field(default_factory=list)
@@ -1433,6 +1550,22 @@ class CampaignExport(BaseModel):
     trend: list[TrendPoint] = Field(default_factory=list)
     detection_tuning: list[DetectionTuningItem] = Field(default_factory=list)
     manifest_sha256: str
+    generated_at: datetime
+    decision_timeline: list["CaseDecisionEventResponse"] = Field(default_factory=list)
+    timeline_integrity: bool = True
+    export_policy_version: Literal["2.0"] = "2.0"
+
+
+class CaseExportFixture(BaseModel):
+    fixture_version: Literal["1.0"] = "1.0"
+    tenant_id: str
+    actor: str
+    case_id: str
+    source_manifest_sha256: str
+    record_counts: dict[str, int] = Field(default_factory=dict)
+    timeline_integrity: bool
+    redacted: Literal[True] = True
+    fixture_sha256: str
     generated_at: datetime
 
 

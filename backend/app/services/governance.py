@@ -20,6 +20,7 @@ from app.schemas.contracts import (
     RiskAcceptanceDecisionRequest,
     RiskAcceptanceResponse,
 )
+from app.services.case_compliance import record_decision_event, validate_approval_delegation
 from app.services.case_governance import evidence_manifest_sha256, record_governance_event
 from app.services.expert_ops import remediation_sla
 
@@ -84,6 +85,7 @@ def review_evidence(
         )
         if row is None:
             raise KeyError(f"Unknown evidence: {evidence_id}")
+        previous_status = row.review_status
         if request.review_status != row.review_status and request.review_status not in _EVIDENCE_TRANSITIONS.get(
             row.review_status, set()
         ):
@@ -102,6 +104,17 @@ def review_evidence(
                 "evidence.reviewed",
                 f"Evidence {row.title} marked {row.review_status}.",
                 {"evidence_id": row.id, "status": row.review_status},
+            )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "evidence",
+                row.id,
+                "evidence_reviewed",
+                previous_status,
+                row.review_status,
+                request.notes,
+                {"review_status": row.review_status},
             )
         session.commit()
         session.refresh(row)
@@ -122,6 +135,8 @@ def update_remediation(
         )
         if row is None:
             raise KeyError(f"Unknown remediation: {remediation_id}")
+        previous_status = row.status
+        previous_verification = row.verification_status
         if request.status != row.status and request.status not in _REMEDIATION_TRANSITIONS.get(row.status, set()):
             raise GovernanceViolation(f"remediation transition {row.status!r} -> {request.status!r} is not allowed")
         row.status = request.status
@@ -143,6 +158,17 @@ def update_remediation(
                 "remediation.lifecycle_changed",
                 f"Remediation {row.finding_title} moved to {row.status}.",
                 {"remediation_id": row.id, "status": row.status},
+            )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "remediation",
+                row.id,
+                "remediation_lifecycle_changed",
+                previous_status,
+                row.status,
+                request.note,
+                {"verification_before": previous_verification, "verification_after": row.verification_status},
             )
         session.commit()
         session.refresh(row)
@@ -182,6 +208,8 @@ def verify_remediation(
             raise KeyError(f"Unknown remediation: {remediation_id}")
         if row.status not in {"resolved", "closed"}:
             raise GovernanceViolation("remediation must be resolved or closed before verification")
+        previous_status = row.status
+        previous_verification = row.verification_status
         if request.decision == "rejected":
             if row.status == "closed":
                 raise GovernanceViolation("closed remediation cannot be rejected; reopen through the approved workflow")
@@ -210,6 +238,17 @@ def verify_remediation(
                 f"remediation.verification_{request.decision}",
                 f"Remediation {row.finding_title} verification marked {request.decision}.",
                 {"remediation_id": row.id, "status": row.status},
+            )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "remediation",
+                row.id,
+                "remediation_verification_changed",
+                previous_verification,
+                row.verification_status,
+                request.note,
+                {"status_before": previous_status, "status_after": row.status},
             )
         session.commit()
         session.refresh(row)
@@ -264,6 +303,8 @@ def _acceptance_response(row: RiskAcceptance) -> RiskAcceptanceResponse:
         approver=row.approver,
         expires_on=row.expires_on,
         acceptance_id=row.id,
+        delegation_id=row.delegation_id,
+        delegated_from=row.delegated_from,
         status=_acceptance_status(row),
         approval_status=_acceptance_approval_status(row),
         approved_by=row.approved_by,
@@ -325,6 +366,17 @@ def create_risk_acceptance(request: RiskAcceptanceCreate, session_factory: Sessi
                 f"Risk acceptance created through {row.expires_on}.",
                 {"acceptance_id": row.id, "remediation_id": row.remediation_id},
             )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "risk_acceptance",
+                row.id,
+                "risk_acceptance_created",
+                None,
+                row.approval_status,
+                "Risk acceptance created.",
+                {"expires_on": row.expires_on},
+            )
         session.commit()
         session.refresh(row)
     return _acceptance_response(row)
@@ -344,6 +396,17 @@ def decide_risk_acceptance(
         )
         if row is None:
             raise KeyError(f"Unknown risk acceptance: {acceptance_id}")
+        delegation = None
+        if request.delegation_id:
+            if request.decision != "approve":
+                raise GovernanceViolation("delegation can only be used for an approval decision")
+            delegation = validate_approval_delegation(
+                session,
+                request.delegation_id,
+                row.campaign_id,
+                tenant_id,
+                current_actor(),
+            )
         if request.decision == "approve":
             expires_on = request.expires_on or row.expires_on
             try:
@@ -358,6 +421,9 @@ def decide_risk_acceptance(
             row.approved_at = utcnow()
             row.revoked_by = None
             row.revoked_at = None
+            if delegation is not None:
+                row.delegation_id = delegation.id
+                row.delegated_from = delegation.delegator_username
             event_type = "risk.acceptance_approved"
         else:
             row.status = "revoked"
@@ -374,6 +440,17 @@ def decide_risk_acceptance(
                 event_type,
                 f"Risk acceptance {row.id} {request.decision}d.",
                 {"acceptance_id": row.id, "expires_on": row.expires_on},
+            )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "risk_acceptance",
+                row.id,
+                event_type,
+                "revoked" if request.decision == "approve" else "approved",
+                row.approval_status,
+                request.note,
+                {"expires_on": row.expires_on, "delegation_id": row.delegation_id},
             )
         session.commit()
         session.refresh(row)
@@ -405,6 +482,17 @@ def expire_risk_acceptance(acceptance_id: str, session_factory: SessionFactory) 
                 "risk.acceptance_expired",
                 f"Risk acceptance {row.id} expired.",
                 {"acceptance_id": row.id, "expires_on": row.expires_on},
+            )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "risk_acceptance",
+                row.id,
+                "risk_acceptance_expired",
+                "approved",
+                row.approval_status,
+                "Risk acceptance expired.",
+                {"expires_on": row.expires_on},
             )
         session.commit()
         session.refresh(row)

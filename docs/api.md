@@ -30,7 +30,9 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET | `/api/v1/cases/{case_id}/custody-history` | Return evidence chain-of-custody history | Tenant-filtered; immutable manifest must match each decision |
 | GET | `/api/v1/cases/{case_id}/evidence` | List case evidence metadata | Tenant-filtered; cross-tenant IDs return 404 |
 | GET | `/api/v1/cases/{case_id}/remediations` | List case remediation records | Tenant-filtered; cross-tenant IDs return 404 |
-| GET | `/api/v1/cases/{case_id}/export` | Build a tenant-safe report-ready case package | Read-only; includes governance history and manifest digest |
+| GET | `/api/v1/cases/{case_id}/export` | Build a tenant-safe report-ready case package | Read-only; includes governance history, decision timeline, verification evidence, and manifest digest |
+| GET | `/api/v1/cases/{case_id}/decision-timeline` | Verify and return the immutable case decision chain | Requires `view_audit`; fails closed on digest mismatch |
+| GET | `/api/v1/cases/{case_id}/export-fixture` | Return a deterministic audit-safe export fixture | Read-only; redacted counts and hashes only |
 | POST | `/api/v1/campaigns/{campaign_id}/runs/{run_id}` | Link a completed scenario run to a campaign | Validates both IDs; no rerun |
 | GET | `/api/v1/campaigns/{campaign_id}/timeline` | Return ordered campaign evidence and remediation events | Local SQLite read |
 | GET | `/api/v1/campaigns/{campaign_id}/export` | Build a deterministic JSON campaign package | Read-only; returns manifest digest |
@@ -55,14 +57,19 @@ The API is versioned under `/api/v1` and returns JSON models that are stable eno
 | GET/POST | `/api/v1/remediations` | Create and list remediation ownership items | Tenant-validated assignment; audit logged |
 | PATCH | `/api/v1/remediations/{remediation_id}/assignment` | Assign remediation to an active same-tenant user | Existing `manage_cases` permission; unknown assignee returns 404 |
 | PATCH | `/api/v1/remediations/{remediation_id}/verification` | Verify or reject a resolved remediation | Server-derived verifier; closed cases reject unsafe rework |
-| GET | `/api/v1/remediations/sla` | Classify remediation SLA posture | Deterministic policy; no silent due-date changes |
+| POST/GET | `/api/v1/remediations/{remediation_id}/verification-evidence` | Record or list independent verification evidence | Requires accepted, custody-verified evidence; immutable manifest must match |
+| GET | `/api/v1/remediations/sla` | Classify remediation SLA posture with clock metrics | Deterministic versioned policy; bounded tenant-local query |
 | GET | `/api/v1/remediations/escalations` | Return deterministic SLA escalation recommendations | Read-only policy hook; no notifications or external mutation |
+| GET | `/api/v1/remediations/escalation-drafts` | Return mockable escalation drafts | `sent=false`, opt-in required, no notification side effect |
 | GET | `/api/v1/integrity/audit` | Verify the chained JSONL audit log | Read-only integrity verification |
 | GET | `/api/v1/trends/risk` | Aggregate persisted risk and coverage by period | Derived from stored run records |
 | GET | `/api/v1/risk-acceptances` | List tenant-scoped approval decisions | Approval and expiry status are server-derived |
 | POST | `/api/v1/risk-acceptances` | Create a future-dated risk acceptance | Existing `manage_cases` permission; rationale is redacted |
-| PATCH | `/api/v1/risk-acceptances/{acceptance_id}/decision` | Approve or revoke a risk acceptance | Server-derived actor; approval and revocation are historical |
+| PATCH | `/api/v1/risk-acceptances/{acceptance_id}/decision` | Approve or revoke a risk acceptance | Server-derived actor; optional delegation must be active, same-tenant, role-qualified, and time-bounded |
 | POST | `/api/v1/risk-acceptances/{acceptance_id}/expire` | Mark a past-due acceptance expired | Fails safely until the persisted expiry date has passed |
+| GET | `/api/v1/risk-acceptances/expiry-reminders` | Return bounded policy-expiry reminders | Read-only mock reminders; `sent=false`, opt-in required |
+| POST/GET | `/api/v1/approval-delegations` | Create or list approval delegations | Same-tenant case-management users only; maximum seven-day window |
+| POST | `/api/v1/approval-delegations/{delegation_id}/revoke` | Revoke a delegation | Server-derived revoker; append-only decision history |
 | GET | `/api/v1/detection-tuning` | Return gap-driven rule-tuning queue | Recommendations only; no Wazuh mutation |
 | GET | `/api/v1/detections/rules` | List versioned declarative detection rules | Authenticated, tenant-aware read; no rule execution |
 | POST | `/api/v1/detections/rules` | Register a process-scoped defensive rule | Analyze permission; approval required for production status |
@@ -149,9 +156,9 @@ The scenario response combines findings, coverage, detection gaps, recommendatio
 
 A campaign is a bounded assessment context with an owner and scope snapshot. The case endpoints are a compatibility-preserving alias over this resource and always derive `tenant_id` and actor fields from the authenticated principal. Evidence registration requires a source, evidence type, title, SHA-256 digest, and optional run/technique links; the immutable evidence manifest excludes mutable review status and notes. Evidence review follows the valid `unreviewed`/`in_review`/`accepted`/`rejected` state machine and records the server-derived reviewer in both the response and governance history. Remediation records add ownership, priority, due date, and lifecycle status; lifecycle transitions are validated and history actor fields are server-derived.
 
-A case can move from `active` to `on_hold` or `closed`, and from `on_hold` to `active` or `closed`; closed cases cannot reopen. Closure requires at least one registered evidence item, accepted review and verified custody for every case evidence item, and every remediation to be resolved/closed and independently verified or covered by a future-dated approved risk acceptance. Assignment accepts only active users in the current tenant and records the server-derived assigning actor. Remediation lifecycle changes move verification back to `unverified` or `pending` as appropriate; only resolved or closed remediations can be verified. The deterministic SLA policy exposes due-soon and overdue escalation recommendations but performs no notifications or remote changes.
+A case can move from `active` to `on_hold` or `closed`, and from `on_hold` to `active` or `closed`; closed cases cannot reopen. Closure requires at least one registered evidence item, accepted review and verified custody for every case evidence item, and every remediation to be resolved/closed and independently verified or covered by a future-dated approved risk acceptance. Assignment accepts only active users in the current tenant and records the server-derived assigning actor. Remediation lifecycle changes move verification back to `unverified` or `pending` as appropriate; only resolved or closed remediations can be verified. Independent remediation verification evidence must belong to the same case, be accepted and custody-verified, and match its immutable manifest. The SLA clock is versioned, UTC-normalized, and bounded to local metadata; escalation recommendations and drafts perform no notifications or remote changes.
 
-Risk acceptances are created with server-derived approval attribution, may be revoked or re-approved through the decision endpoint, and may be explicitly expired only after their persisted expiry date. The tenant-safe `case-export.v3` contract includes server-derived tenant and actor fields, evidence custody history, governance history, risk-acceptance status, remediation SLA escalation recommendations, trends, detection tuning, and a deterministic manifest digest. It is metadata-only and excludes raw telemetry, credentials, uploaded files, and external-system mutation controls.
+Risk acceptances are created with server-derived approval attribution, may be revoked or re-approved through the decision endpoint, and may be explicitly expired only after their persisted expiry date. Approval delegation is constrained to an active same-tenant case-management user, a maximum seven-day window, no self-delegation, and optional case scope. Expiry reminders are read-only, mockable, opt-in, and never mark a notification as sent. The tenant-safe `case-export.v3` contract includes server-derived tenant and actor fields, evidence custody history, verification evidence, governance history, immutable decision timeline integrity, risk-acceptance status, remediation SLA escalation recommendations, trends, detection tuning, and a deterministic manifest digest. It is metadata-only and excludes raw telemetry, credentials, uploaded files, and external-system mutation controls.
 
 ## Offline PCAP forensics
 

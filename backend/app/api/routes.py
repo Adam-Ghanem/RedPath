@@ -48,6 +48,8 @@ from app.models.telemetry import (
 from app.platform import HealthCheck, HealthContract, HealthStatus, LivenessContract, ReadinessContract
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
+    ApprovalDelegationCreate,
+    ApprovalDelegationResponse,
     AssessmentRunSummary,
     AttackPathAnalysisRequest,
     AttackPathAnalysisResponse,
@@ -55,6 +57,8 @@ from app.schemas.contracts import (
     CampaignExport,
     CampaignResponse,
     CampaignTimelineEvent,
+    CaseDecisionTimelineResponse,
+    CaseExportFixture,
     CaseStatusUpdate,
     CopilotExplainRequest,
     CopilotExplanationResponse,
@@ -110,13 +114,17 @@ from app.schemas.contracts import (
     RegressionTrendRequest,
     RemediationAssignmentUpdate,
     RemediationCreate,
+    RemediationEscalationDraft,
     RemediationLifecycleUpdate,
     RemediationResponse,
     RemediationSlaEscalation,
     RemediationSlaItem,
+    RemediationVerificationEvidenceRequest,
+    RemediationVerificationEvidenceResponse,
     RemediationVerificationUpdate,
     RiskAcceptanceCreate,
     RiskAcceptanceDecisionRequest,
+    RiskAcceptanceExpiryReminder,
     RiskAcceptanceResponse,
     RuleDeprecationReport,
     RiskPolicySimulationRequest,
@@ -168,6 +176,23 @@ from app.services.access_governance import (
 )
 from app.services.ad_detection import detect_ad_findings
 from app.services.attack_path_risk import analyze_attack_path_risk, to_persistence_record
+from app.services.case_compliance import (
+    case_export_fixture,
+    create_approval_delegation,
+    list_approval_delegations,
+    list_decision_timeline,
+    list_verification_evidence,
+    record_verification_evidence,
+    remediation_escalation_drafts,
+    revoke_approval_delegation,
+    risk_acceptance_expiry_reminders,
+)
+from app.services.case_compliance import (
+    remediation_escalations as compliance_remediation_escalations,
+)
+from app.services.case_compliance import (
+    remediation_sla as compliance_remediation_sla,
+)
 from app.services.case_governance import (
     list_custody_history,
     list_governance_history,
@@ -209,8 +234,6 @@ from app.services.expert_ops import (
     list_campaigns,
     list_evidence,
     list_remediations,
-    remediation_escalations,
-    remediation_sla,
     risk_trend,
 )
 from app.services.governance import (
@@ -1085,6 +1108,28 @@ def build_router(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @protected_router.get(
+        "/cases/{case_id}/decision-timeline",
+        response_model=CaseDecisionTimelineResponse,
+        dependencies=[Depends(permission_dependency("view_audit"))],
+    )
+    def case_decision_timeline(case_id: str) -> CaseDecisionTimelineResponse:
+        try:
+            return list_decision_timeline(case_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @protected_router.get(
+        "/cases/{case_id}/export-fixture",
+        response_model=CaseExportFixture,
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def case_export_fixture_route(case_id: str) -> CaseExportFixture:
+        try:
+            return case_export_fixture(campaign_export(case_id, session_factory))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @protected_router.post(
         "/campaigns",
         response_model=CampaignResponse,
@@ -1580,6 +1625,46 @@ def build_router(
         )
         return result
 
+    @protected_router.post(
+        "/remediations/{remediation_id}/verification-evidence",
+        response_model=RemediationVerificationEvidenceResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def remediation_verification_evidence(
+        remediation_id: str, request: RemediationVerificationEvidenceRequest
+    ) -> RemediationVerificationEvidenceResponse:
+        try:
+            result = record_verification_evidence(
+                remediation_id,
+                request.evidence_id,
+                request.manifest_sha256,
+                request.summary,
+                session_factory,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            "remediation.verification_evidence_recorded",
+            {"remediation_id": remediation_id, "evidence_id": result.evidence_id},
+        )
+        return result
+
+    @protected_router.get(
+        "/remediations/{remediation_id}/verification-evidence",
+        response_model=list[RemediationVerificationEvidenceResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def remediation_verification_evidence_list(
+        remediation_id: str,
+    ) -> list[RemediationVerificationEvidenceResponse]:
+        try:
+            return list_verification_evidence(remediation_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @protected_router.get(
         "/risk-acceptances",
         response_model=list[RiskAcceptanceResponse],
@@ -1587,6 +1672,14 @@ def build_router(
     )
     def risk_acceptances() -> list[RiskAcceptanceResponse]:
         return list_risk_acceptances(session_factory)
+
+    @protected_router.get(
+        "/risk-acceptances/expiry-reminders",
+        response_model=list[RiskAcceptanceExpiryReminder],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def risk_acceptance_expiry_reminders_route() -> list[RiskAcceptanceExpiryReminder]:
+        return risk_acceptance_expiry_reminders(session_factory)
 
     @protected_router.post(
         "/risk-acceptances",
@@ -1645,6 +1738,48 @@ def build_router(
         )
         return result
 
+    @protected_router.post(
+        "/approval-delegations",
+        response_model=ApprovalDelegationResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def approval_delegation_create(request: ApprovalDelegationCreate) -> ApprovalDelegationResponse:
+        try:
+            result = create_approval_delegation(request, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            "approval.delegation_created",
+            {"delegation_id": result.delegation_id, "delegate": result.delegate_username},
+        )
+        return result
+
+    @protected_router.get(
+        "/approval-delegations",
+        response_model=list[ApprovalDelegationResponse],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def approval_delegations() -> list[ApprovalDelegationResponse]:
+        return list_approval_delegations(session_factory)
+
+    @protected_router.post(
+        "/approval-delegations/{delegation_id}/revoke",
+        response_model=ApprovalDelegationResponse,
+        dependencies=[Depends(permission_dependency("manage_cases"))],
+    )
+    def approval_delegation_revoke(delegation_id: str) -> ApprovalDelegationResponse:
+        try:
+            result = revoke_approval_delegation(delegation_id, session_factory)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit("approval.delegation_revoked", {"delegation_id": delegation_id})
+        return result
+
     @protected_router.get(
         "/scorecards/coverage",
         response_model=CoverageScorecard, dependencies=[Depends(permission_dependency("read"))]
@@ -1664,7 +1799,7 @@ def build_router(
         dependencies=[Depends(permission_dependency("read"))],
     )
     def remediation_sla_route() -> list[RemediationSlaItem]:
-        return remediation_sla(session_factory)
+        return compliance_remediation_sla(session_factory)
 
     @protected_router.get(
         "/remediations/escalations",
@@ -1672,7 +1807,15 @@ def build_router(
         dependencies=[Depends(permission_dependency("read"))],
     )
     def remediation_escalations_route() -> list[RemediationSlaEscalation]:
-        return remediation_escalations(session_factory)
+        return compliance_remediation_escalations(session_factory)
+
+    @protected_router.get(
+        "/remediations/escalation-drafts",
+        response_model=list[RemediationEscalationDraft],
+        dependencies=[Depends(permission_dependency("read"))],
+    )
+    def remediation_escalation_drafts_route() -> list[RemediationEscalationDraft]:
+        return remediation_escalation_drafts(session_factory)
 
     @protected_router.get(
         "/trends/risk",

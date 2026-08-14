@@ -31,6 +31,9 @@ TENANT_TABLES = (
     "detection_observations",
     "audit_events",
     "attack_path_analyses",
+    "remediation_verification_evidence",
+    "approval_delegations",
+    "case_decision_events",
 )
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Callable
 from uuid import uuid4
 
@@ -26,6 +26,11 @@ from app.schemas.contracts import (
     RemediationSlaEscalation,
     RemediationSlaItem,
     TrendPoint,
+)
+from app.services.case_compliance import (
+    list_decision_timeline,
+    list_verification_evidence,
+    record_decision_event,
 )
 from app.services.case_governance import (
     evidence_manifest_sha256,
@@ -154,6 +159,17 @@ def create_evidence(request: EvidenceCreate, session_factory: SessionFactory) ->
                 f"Evidence {row.title} registered.",
                 {"evidence_id": row.id, "sha256": row.sha256},
             )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "evidence",
+                row.id,
+                "evidence_registered",
+                None,
+                row.review_status,
+                "Evidence registered.",
+                {"manifest_sha256": row.manifest_sha256},
+            )
         session.commit()
         session.refresh(row)
     return EvidenceResponse(
@@ -246,6 +262,17 @@ def create_remediation(request: RemediationCreate, session_factory: SessionFacto
                 f"Remediation for {row.finding_title} created.",
                 {"remediation_id": row.id, "priority": row.priority},
             )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "remediation",
+                row.id,
+                "remediation_created",
+                None,
+                row.status,
+                "Remediation created.",
+                {"assigned_to": row.assigned_to, "priority": row.priority},
+            )
         session.commit()
         session.refresh(row)
     payload = request.model_dump()
@@ -284,6 +311,7 @@ def assign_remediation(
         )
         if assignee is None:
             raise KeyError(f"Unknown remediation assignee: {request.assigned_to}")
+        previous_assignee = row.assigned_to
         row.assigned_to = assignee.username
         row.updated_at = utcnow()
         if row.campaign_id:
@@ -293,6 +321,17 @@ def assign_remediation(
                 "remediation.assigned",
                 f"Remediation {row.finding_title} assigned.",
                 {"remediation_id": row.id, "assigned_to": row.assigned_to},
+            )
+            record_decision_event(
+                session,
+                row.campaign_id,
+                "remediation",
+                row.id,
+                "remediation_assigned",
+                previous_assignee,
+                row.assigned_to,
+                "Remediation assignment changed.",
+                {"assigned_to": row.assigned_to},
             )
         session.commit()
         session.refresh(row)
@@ -519,69 +558,15 @@ def evidence_manifest(evidence_id: str, session_factory: SessionFactory) -> Evid
 
 
 def remediation_sla(session_factory: SessionFactory) -> list[RemediationSlaItem]:
-    tenant_id = current_tenant_id()
-    now = datetime.now(timezone.utc)
-    with session_factory() as session:
-        rows = (
-            session.query(RemediationItem)
-            .filter_by(tenant_id=tenant_id)
-            .order_by(RemediationItem.updated_at.desc())
-            .all()
-        )
-    results: list[RemediationSlaItem] = []
-    for row in rows:
-        target_days = _SLA_DAYS.get(row.priority, _SLA_DAYS["medium"])
-        due = date.fromisoformat(row.due_date) if row.due_date else row.created_at.date() + timedelta(days=target_days)
-        if row.status in {"closed", "resolved"}:
-            state = "closed"
-        elif due < now.date():
-            state = "overdue"
-        elif (due - now.date()).days <= max(2, target_days // 5):
-            state = "due_soon"
-        else:
-            state = "on_track"
-        results.append(
-            RemediationSlaItem(
-                remediation_id=row.id,
-                finding_title=row.finding_title,
-                priority=row.priority,
-                status=row.status,
-                owner=row.owner,
-                assigned_to=row.assigned_to,
-                due_date=due.isoformat(),
-                target_days=target_days,
-                state=state,
-            )
-        )
-    return results
+    from app.services.case_compliance import remediation_sla as compliance_remediation_sla
+
+    return compliance_remediation_sla(session_factory)
 
 
 def remediation_escalations(session_factory: SessionFactory) -> list[RemediationSlaEscalation]:
-    escalations: list[RemediationSlaEscalation] = []
-    for item in remediation_sla(session_factory):
-        if item.state not in {"due_soon", "overdue"}:
-            continue
-        level = (
-            "leadership_review"
-            if item.state == "overdue" and item.priority in {"critical", "high"}
-            else "manager_review"
-        )
-        action = (
-            "Review overdue remediation ownership and approve a time-bounded exception or recovery plan."
-            if item.state == "overdue"
-            else "Notify the assigned owner and validate the remediation plan before the SLA window closes."
-        )
-        escalations.append(
-            RemediationSlaEscalation(
-                tenant_id=current_tenant_id(),
-                remediation_id=item.remediation_id,
-                assigned_to=item.assigned_to,
-                state=item.state,
-                escalation_level=level,
-                recommended_action=action,
-            )
-        )
-    return escalations
+    from app.services.case_compliance import remediation_escalations as compliance_remediation_escalations
+
+    return compliance_remediation_escalations(session_factory)
 
 
 def campaign_export(campaign_id: str, session_factory: SessionFactory) -> CampaignExport:
@@ -602,6 +587,12 @@ def campaign_export(campaign_id: str, session_factory: SessionFactory) -> Campai
     tuning = detection_tuning_queue(session_factory)
     custody_history = list_custody_history(campaign_id, session_factory)
     governance_history = list_governance_history(campaign_id, session_factory)
+    decision_timeline = list_decision_timeline(campaign_id, session_factory)
+    verification_evidence = [
+        item
+        for remediation in remediations
+        for item in list_verification_evidence(remediation.remediation_id, session_factory)
+    ]
     from app.services.governance import list_risk_acceptances  # noqa: PLC0415
 
     risk_acceptances = [
@@ -620,10 +611,13 @@ def campaign_export(campaign_id: str, session_factory: SessionFactory) -> Campai
         "timeline": [item.model_dump(mode="json") for item in timeline],
         "evidence": [item.model_dump(mode="json") for item in evidence],
         "remediations": [item.model_dump(mode="json") for item in remediations],
+        "verification_evidence": [item.model_dump(mode="json") for item in verification_evidence],
         "custody_history": [item.model_dump(mode="json") for item in custody_history],
         "governance_history": [item.model_dump(mode="json") for item in governance_history],
         "risk_acceptances": [item.model_dump(mode="json") for item in risk_acceptances],
         "sla_escalations": [item.model_dump(mode="json") for item in sla_escalations],
+        "decision_timeline": [item.model_dump(mode="json") for item in decision_timeline.events],
+        "timeline_integrity": decision_timeline.integrity_valid,
         "trend": [item.model_dump(mode="json") for item in trend],
         "detection_tuning": [item.model_dump(mode="json") for item in tuning],
     }
@@ -636,10 +630,13 @@ def campaign_export(campaign_id: str, session_factory: SessionFactory) -> Campai
         timeline=timeline,
         evidence=evidence,
         remediations=remediations,
+        verification_evidence=verification_evidence,
         custody_history=custody_history,
         governance_history=governance_history,
         risk_acceptances=risk_acceptances,
         sla_escalations=sla_escalations,
+        decision_timeline=decision_timeline.events,
+        timeline_integrity=decision_timeline.integrity_valid,
         trend=trend,
         detection_tuning=tuning,
         manifest_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
