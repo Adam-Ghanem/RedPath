@@ -815,8 +815,11 @@ class RiskAssessment(BaseModel):
     tier: Literal["low", "medium", "high", "critical"]
     recommended_actions: list[str] = Field(min_length=1, max_length=2)
     confidence_note: str = Field(min_length=1, max_length=800)
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
     centrality_score: float = Field(ge=0, le=1)
     deterministic_risk_score: float = Field(ge=0, le=100)
+    provider_tier: Literal["low", "medium", "high", "critical"] | None = None
+    requires_human_review: bool = True
     ai_enhanced: bool = False
 
 
@@ -843,5 +846,37 @@ class CopilotExplainResponse(BaseModel):
     explanation: str = Field(min_length=1, max_length=3000)
     evidence_basis: list[str] = Field(default_factory=list, max_length=12)
     confidence_note: str = Field(min_length=1, max_length=800)
+    requires_human_review: bool = True
     ai_enhanced: bool = False
     cached: bool = False
+
+
+class AIAuditEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str
+    timestamp: datetime
+    actor: str
+    operation: Literal["ai.call", "ai.feedback"]
+    details: dict[str, Any]
+    digest: str
+
+
+class AIFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: Literal["finding", "attack_path"]
+    source_id: str = Field(min_length=1, max_length=128)
+    verdict: Literal["confirmed", "incorrect"]
+    notes: str = Field(default="", max_length=1000)
+
+
+class AIFeedbackResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feedback_id: str
+    source_type: Literal["finding", "attack_path"]
+    source_id: str
+    verdict: Literal["confirmed", "incorrect"]
+    human_verified: bool = True
+    recorded_at: datetime

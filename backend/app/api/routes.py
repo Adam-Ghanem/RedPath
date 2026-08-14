@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from app.core.ai_audit import AIAuditLogger
 from app.core.audit import AuditLogger
 from app.core.auth import (
     RateLimiter,
@@ -44,6 +45,9 @@ from app.models.telemetry import (
 )
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
+    AIAuditEvent,
+    AIFeedbackRequest,
+    AIFeedbackResponse,
     AIRiskAssessmentRequest,
     AssessmentRunSummary,
     AttackPathAnalysisRequest,
@@ -194,7 +198,12 @@ def build_router(
     identity = IdentityService(session_factory, settings.auth_bootstrap_token)
     limiter = RateLimiter(settings.rate_limit_requests_per_minute)
     copilot_limiter = RateLimiter(settings.ai_requests_per_minute)
-    ai_service = AIService(settings)
+    ai_audit = AIAuditLogger(
+        settings.ai_audit_log_path,
+        retention_days=settings.ai_audit_retention_days,
+        max_entries=settings.ai_audit_max_entries,
+    )
+    ai_service = AIService(settings, audit=ai_audit)
     authenticate = principal_dependency(identity, limiter)
     protected_router = APIRouter(prefix="", dependencies=[Depends(authenticate)])
 
@@ -1317,6 +1326,9 @@ def build_router(
             request.path,
             request.centrality_score,
             request.detection_observations,
+            tenant_id=get_principal().tenant_id,
+            actor=current_actor(),
+            endpoint="risk-scoring",
         )
         record_audit(
             "risk.ai_assessed",
@@ -1371,6 +1383,9 @@ def build_router(
                 source_id=finding.id,
                 context=context,
                 evidence_basis=evidence_basis,
+                tenant_id=principal.tenant_id,
+                actor=principal.username,
+                endpoint="copilot",
             )
         else:
             path_id = request.attack_path_id or ""
@@ -1394,6 +1409,9 @@ def build_router(
                 source_id=path.path_id,
                 context=context,
                 evidence_basis=evidence_basis,
+                tenant_id=principal.tenant_id,
+                actor=principal.username,
+                endpoint="copilot",
             )
         record_audit(
             "copilot.explanation_generated",
@@ -1405,6 +1423,50 @@ def build_router(
             },
         )
         return result
+
+    @protected_router.get(
+        "/ai/audit-log",
+        response_model=list[AIAuditEvent],
+        dependencies=[Depends(permission_dependency("view_audit"))],
+    )
+    def ai_audit_log(limit: int = Query(default=100, ge=1, le=500)) -> list[AIAuditEvent]:
+        principal = get_principal()
+        events = ai_audit.list_events(tenant_id=principal.tenant_id, limit=limit)
+        return [AIAuditEvent.model_validate(event) for event in events]
+
+    @protected_router.post(
+        "/ai/feedback",
+        response_model=AIFeedbackResponse,
+        status_code=201,
+        dependencies=[Depends(permission_dependency("analyze"))],
+    )
+    def ai_feedback(request: AIFeedbackRequest) -> AIFeedbackResponse:
+        principal = get_principal()
+        feedback_id = ai_audit.record_feedback(
+            tenant_id=principal.tenant_id,
+            actor=principal.username,
+            source_type=request.source_type,
+            source_id=request.source_id,
+            verdict=request.verdict,
+            notes_hash=ai_audit.hash_text(request.notes),
+        )
+        recorded_at = datetime.now(timezone.utc)
+        record_audit(
+            "ai.feedback_recorded",
+            {
+                "feedback_id": feedback_id,
+                "source_type": request.source_type,
+                "source_id": request.source_id,
+                "verdict": request.verdict,
+            },
+        )
+        return AIFeedbackResponse(
+            feedback_id=feedback_id,
+            source_type=request.source_type,
+            source_id=request.source_id,
+            verdict=request.verdict,
+            recorded_at=recorded_at,
+        )
 
     @protected_router.post(
         "/purple/analyze",

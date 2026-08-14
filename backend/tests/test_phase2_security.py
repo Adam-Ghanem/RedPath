@@ -20,6 +20,8 @@ PUBLIC_PATHS = {
 }
 
 PROTECTED_PATHS = {
+    "/api/v1/ai/audit-log",
+    "/api/v1/ai/feedback",
     "/api/v1/attack-paths/analyze",
     "/api/v1/copilot/explain",
     "/api/v1/auth/logout",

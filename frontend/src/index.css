@@ -254,3 +254,25 @@ a { color: inherit; text-decoration: none; }
     }
   }
 }
+
+.ai-review-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin: 12px 0 7px;
+  padding: 5px 8px;
+  border: 1px solid rgba(241, 189, 106, .42);
+  color: #f1bd6a;
+  background: rgba(241, 189, 106, .09);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.ai-review-copy {
+  margin: 0 0 14px;
+  color: #71849a;
+  font-size: 11px;
+  line-height: 1.5;
+}

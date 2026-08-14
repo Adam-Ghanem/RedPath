@@ -201,12 +201,14 @@ The worker uses a small bounded thread pool (`REDPATH_RECON_MAX_WORKERS`, defaul
 
 ## AI risk assessment and SOC copilot
 
-The optional AI routes are protected by bearer authentication and the `analyze` permission. They are disabled by default through `AI_FEATURES_ENABLED=false`; enabling them requires an environment-provided `ANTHROPIC_API_KEY`. The key is never logged or returned. Provider failures, timeouts, rate limits, malformed responses, and disabled configuration fail open to deterministic context-only responses rather than stopping the API.
+The optional AI routes are protected by bearer authentication and the `analyze` permission, except the audit read route, which requires `view_audit`. They are disabled by default through `AI_FEATURES_ENABLED=false` and `AI_PROVIDER=none`. Provider selection is server-side: `none` is deterministic-only, `local` uses an operator-controlled HTTP endpoint, and `anthropic` uses the configured external API key. Provider failures, timeouts, rate limits, malformed responses, and disabled configuration fail open to deterministic context-only responses rather than stopping the API.
 
 | Method | Endpoint | Purpose | Safety behavior |
 | --- | --- | --- | --- |
 | POST | `/api/v1/risk/ai-assess` | Add a grounded explanation to one deterministic `RankedAttackPath` | The supplied risk tier and score remain authoritative; centrality is returned unchanged on fallback; bounded redacted context only |
 | POST | `/api/v1/copilot/explain` | Explain one tenant-scoped finding or recently analyzed attack path | Exactly one ID is accepted; finding lookup filters by authenticated tenant; path references expire from a bounded process-local registry; separate AI rate limit |
+| GET | `/api/v1/ai/audit-log` | Review recent AI calls and human feedback for the current tenant | Requires `view_audit`; returns provider, context hash, field categories, response summary, latency, and status, never raw prompts |
+| POST | `/api/v1/ai/feedback` | Record analyst confirmation or correction of an AI output | Requires `analyze`; notes are hashed in the AI audit stream and do not alter risk or remediation automatically |
 
 The backend sends only a bounded projection of the selected context to the provider. Common secret assignments, credentials, tokens, authorization values, raw-event fields, and IP addresses are redacted. Operators should still complete their own data-governance review before enabling external processing. Copilot results are cached for the configured TTL, and cache keys use a SHA-256 fingerprint of the redacted context rather than storing a raw prompt identifier.
 
@@ -222,4 +224,4 @@ Example risk request:
 }
 ```
 
-The complete `RankedAttackPath` object is required by the strict Pydantic contract; the abbreviated example above is illustrative only. The response contains `explanation`, `tier`, up to two `recommended_actions`, `confidence_note`, `centrality_score`, `deterministic_risk_score`, and `ai_enhanced`. The copilot response contains a concise explanation, evidence basis, confidence note, source identifier, cache indicator, and `ai_enhanced` status.
+The complete `RankedAttackPath` object is required by the strict Pydantic contract; the abbreviated example above is illustrative only. The response contains `explanation`, `tier`, up to two `recommended_actions`, `confidence_note`, optional provider confidence, `centrality_score`, `deterministic_risk_score`, provider tier, `requires_human_review`, and `ai_enhanced`. The copilot response contains a concise explanation, evidence basis, confidence note, source identifier, cache indicator, `requires_human_review`, and `ai_enhanced` status. High and critical deterministic tiers, missing or low provider confidence, and tier disagreement require human review; the frontend displays an explicit verification badge.

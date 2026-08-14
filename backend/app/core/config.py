@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -36,14 +37,21 @@ class Settings(BaseSettings):
     siem_max_query_window_hours: int = 24
     siem_request_timeout_seconds: int = 20
     ai_features_enabled: bool = False
+    ai_provider: Literal["none", "local", "anthropic"] = "none"
     anthropic_api_key: str = ""
     anthropic_api_url: str = "https://api.anthropic.com/v1/messages"
     anthropic_model: str = "claude-haiku-4-5"
+    local_llm_base_url: str = "http://127.0.0.1:11434/api/generate"
+    local_llm_model: str = "llama3.1:8b"
+    local_llm_timeout_seconds: float = 30.0
     anthropic_timeout_seconds: float = 15.0
     anthropic_max_tokens: int = 1200
     ai_cache_ttl_seconds: int = 3600
     ai_cache_max_entries: int = 2000
     ai_requests_per_minute: int = 20
+    ai_audit_log_path: str = "./data/ai_audit.jsonl"
+    ai_audit_retention_days: int = 365
+    ai_audit_max_entries: int = 10_000
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
