@@ -1,14 +1,14 @@
 """add telemetry operational resilience state
 
 Revision ID: 6f4a2b8c9d10
-Revises: 22d614b2aac8
+Revises: 4f2a6c1e9b77
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "6f4a2b8c9d10"
-down_revision = "22d614b2aac8"
+down_revision = "4f2a6c1e9b77"
 branch_labels = None
 depends_on = None
 
