@@ -160,16 +160,16 @@ def test_service_account_api_requires_fine_grained_manage_identity_permission(tm
     assert denied.json()["detail"] == "Insufficient authorization"
 
 
-def test_migration_v5_v6_is_additive_and_recorded(tmp_path: Path) -> None:
+def test_enterprise_identity_revision_is_applied_by_alembic(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'migration.db'}"
     create_session_factory(database_url)
     engine = create_engine(database_url)
     tables = set(inspect(engine).get_table_names())
     assert {"service_accounts", "service_account_tokens"}.issubset(tables)
     with engine.connect() as connection:
-        versions = {row[0] for row in connection.execute(text("SELECT version FROM schema_migrations"))}
+        version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         session_columns = {column["name"] for column in inspect(engine).get_columns("auth_sessions")}
-    assert {5, 6}.issubset(versions)
+    assert version == "565df19a3ca6"
     assert "mfa_verified_until" in session_columns
 
 
