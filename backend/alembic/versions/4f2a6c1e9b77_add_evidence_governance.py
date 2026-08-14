@@ -1,7 +1,7 @@
 """add evidence governance interfaces
 
 Revision ID: 4f2a6c1e9b77
-Revises: 22d614b2aac8
+Revises: c14f9b72d6e1
 Create Date: 2026-08-14
 """
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "4f2a6c1e9b77"
-down_revision = "22d614b2aac8"
+down_revision = "c14f9b72d6e1"
 branch_labels = None
 depends_on = None
 
