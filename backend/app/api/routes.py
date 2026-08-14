@@ -45,6 +45,7 @@ from app.models.telemetry import (
     TelemetryListResponse,
     TelemetryQuery,
 )
+from app.platform import HealthCheck, HealthContract, HealthStatus, LivenessContract, ReadinessContract
 from app.plugins.registry import list_plugins
 from app.schemas.contracts import (
     AssessmentRunSummary,
@@ -488,23 +489,26 @@ def build_router(
     detection_catalog = DetectionRuleCatalog()
     detection_lifecycle = DetectionLifecycleService(detection_catalog)
 
-    @router.get("/health")
-    def health() -> dict[str, str | bool]:
-        return {
-            "status": "ok",
-            "service": settings.app_name,
-            "release": settings.release,
-            "environment": settings.environment,
-            "dry_run_default": settings.dry_run,
-        }
+    @router.get("/health", response_model=HealthContract)
+    def health() -> HealthContract:
+        return HealthContract(
+            service=settings.app_name,
+            release=settings.release,
+            environment=settings.environment,
+            dry_run_default=settings.dry_run,
+        )
 
-    @router.get("/health/live")
-    def liveness() -> dict[str, str]:
-        return {"status": "live", "service": settings.app_name}
+    @router.get("/health/live", response_model=LivenessContract)
+    def liveness() -> LivenessContract:
+        return LivenessContract(service=settings.app_name)
 
-    @router.get("/health/ready")
-    def readiness() -> dict[str, str | dict[str, str]]:
-        return {"status": "ready", "checks": {"application": "ok"}}
+    @router.get("/health/ready", response_model=ReadinessContract)
+    def readiness() -> ReadinessContract:
+        return ReadinessContract(
+            status="ready",
+            service=settings.app_name,
+            checks={"application": HealthCheck(status=HealthStatus.OK)},
+        )
 
     @router.get("/metrics", include_in_schema=False)
     def metrics_endpoint() -> PlainTextResponse:
