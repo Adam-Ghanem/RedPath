@@ -1,7 +1,7 @@
 """Add discovery job reliability state and inventory lookup indexes.
 
 Revision ID: c14f9b72d6e1
-Revises: ae8beabf6620
+Revises: 7c9d2a4e1f6b
 Create Date: 2026-08-14
 """
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c14f9b72d6e1"
-down_revision = "22d614b2aac8"
+down_revision = "7c9d2a4e1f6b"
 branch_labels = None
 depends_on = None
 
